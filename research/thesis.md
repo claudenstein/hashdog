@@ -245,7 +245,7 @@ but irrelevant for brute-force. The optimization strategy must be attack-mode aw
 ### Phase 2: Low-Risk Optimizations — IN PROGRESS
 - [x] Implement autotune result caching across sessions (2026-04-08)
 - [x] Switch candidate buffers to pinned host memory (2026-04-08)
-- [ ] Batch rule output buffer allocation (pool allocator)
+- [x] Eliminate per-candidate malloc in rule engine (2026-04-08)
 - [ ] Explore mmap for core wordlist path
 
 #### Autotune Caching Implementation (2026-04-08)

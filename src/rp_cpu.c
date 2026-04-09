@@ -1190,9 +1190,22 @@ int _old_apply_rule (const char *rule, int rule_len, char in[RP_PASSWORD_SIZE], 
 
   memcpy (out, in, out_len);
 
-  char *rule_new = (char *) hcmalloc (rule_len);
+  // use stack buffer for hex-resolved rule copy to avoid per-candidate malloc
+  char rule_new_stack[RP_PASSWORD_SIZE];
+  char *rule_new_heap = NULL;
+  char *rule_new;
 
-  #define HCFREE_AND_RETURN(x) { hcfree (rule_new); return (x); }
+  if (rule_len <= RP_PASSWORD_SIZE)
+  {
+    rule_new = rule_new_stack;
+  }
+  else
+  {
+    rule_new_heap = (char *) hcmalloc (rule_len);
+    rule_new = rule_new_heap;
+  }
+
+  #define HCFREE_AND_RETURN(x) { hcfree (rule_new_heap); return (x); }
 
   int rule_len_new = 0;
 
