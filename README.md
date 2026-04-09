@@ -4,6 +4,10 @@
 
 ### Research Status ###
 
+**Phase 2: Low-Risk Optimizations (In Progress)**
+
+- **Autotune caching** — Persistent disk cache for autotuner results eliminates 10-30s startup cost per hash mode per device on subsequent runs. Cache key captures device identity, algorithm, and tuning parameter bounds. Stored at `~/.hashcat/hashcat.autotune`.
+
 **Phase 1: Architectural Analysis (Complete)**
 
 A full source-level decomposition of the hashcat execution pipeline identified six bottleneck domains, ranked by estimated impact:

@@ -242,11 +242,31 @@ This requires:
 **Conclusion:** Pipeline parallelism is critical for dictionary/rule attacks,
 but irrelevant for brute-force. The optimization strategy must be attack-mode aware.
 
-### Phase 2: Low-Risk Optimizations
-- [ ] Implement autotune result caching across sessions
+### Phase 2: Low-Risk Optimizations — IN PROGRESS
+- [x] Implement autotune result caching across sessions (2026-04-08)
 - [ ] Switch candidate buffers to pinned host memory
 - [ ] Batch rule output buffer allocation (pool allocator)
 - [ ] Explore mmap for core wordlist path
+
+#### Autotune Caching Implementation (2026-04-08)
+
+**Problem:** The autotuner performs iterative binary search over three kernel parameters
+(kernel_accel, kernel_loops, kernel_threads) using actual GPU kernel launches, costing
+10-30 seconds per hash mode per device on each session start.
+
+**Solution:** Persistent disk cache at `~/.hashcat/hashcat.autotune`, following the
+dictstat binary caching pattern. Cache key: (device_name, hash_mode, attack_exec,
+device_processors, kernel_accel_min/max, kernel_loops_min/max, kernel_threads_min/max,
+salt_iter). On cache hit, the tuned parameters are applied directly without any GPU
+kernel launches, reducing autotune time to ~0ms.
+
+**Design decisions:**
+- Cache is not used when user specifies `--force` (fallback to minimum values)
+- Cache is not used when all tuning parameters are already fixed (min==max for all three)
+- Cached values are validated against current device bounds before use
+- Binary file format with version header for forward compatibility
+- Maximum 10,000 entries (covers hundreds of devices × hash modes)
+- Thread-safe: each device thread reads from shared cache; writes happen after all threads complete
 
 ### Phase 3: Pipeline Parallelism (High Impact, High Complexity)
 - [ ] Implement double-buffered candidate buffers per device

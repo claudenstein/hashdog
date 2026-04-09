@@ -10,6 +10,7 @@
 #include "status.h"
 #include "shared.h"
 #include "autotune.h"
+#include "autotune_cache.h"
 
 int find_tuning_function (hashcat_ctx_t *hashcat_ctx, MAYBE_UNUSED hc_device_param_t *device_param)
 {
@@ -719,6 +720,63 @@ HC_API_CALL void *thread_autotune (void *p)
   device_param->at_status = AT_STATUS_FAILED;
   device_param->at_rc = -1; // generic error
 
+  const hashconfig_t   *hashconfig   = hashcat_ctx->hashconfig;
+  const user_options_t *user_options = hashcat_ctx->user_options;
+
+  // try cache lookup — skip the expensive autotune if we have a cached result
+  // only when user did not manually fix the tuning parameters (min==max for all)
+  // and not using --force
+
+  u32 cached_accel   = 0;
+  u32 cached_loops   = 0;
+  u32 cached_threads = 0;
+
+  const bool all_fixed = (device_param->kernel_accel_min == device_param->kernel_accel_max)
+                      && (device_param->kernel_loops_min == device_param->kernel_loops_max)
+                      && (device_param->kernel_threads_min == device_param->kernel_threads_max);
+
+  if ((user_options->force == false) && (all_fixed == false)
+    && autotune_cache_lookup (hashcat_ctx, device_param, &cached_accel, &cached_loops, &cached_threads))
+  {
+    // validate cached values are within current bounds
+
+    if ((cached_accel   >= device_param->kernel_accel_min)   && (cached_accel   <= device_param->kernel_accel_max)
+     && (cached_loops   >= device_param->kernel_loops_min)   && (cached_loops   <= device_param->kernel_loops_max)
+     && (cached_threads >= device_param->kernel_threads_min) && (cached_threads <= device_param->kernel_threads_max))
+    {
+      device_param->kernel_accel   = cached_accel;
+      device_param->kernel_loops   = cached_loops;
+      device_param->kernel_threads = cached_threads;
+
+      const u32 hardware_power = ((hashconfig->opts_type & OPTS_TYPE_MP_MULTI_DISABLE)     ? 1 : device_param->device_processors)
+                               * ((hashconfig->opts_type & OPTS_TYPE_THREAD_MULTI_DISABLE) ? 1 : device_param->kernel_threads);
+
+      device_param->hardware_power = hardware_power;
+      device_param->kernel_power   = hardware_power * device_param->kernel_accel;
+
+      // reset timers
+
+      device_param->exec_pos = 0;
+
+      memset (device_param->exec_msec,          0,          EXEC_CACHE * sizeof (double));
+      memset (device_param->exec_us_prev1,      0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev2,      0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev3,      0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev4,      0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_init2, 0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_loop2, 0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_aux1,  0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_aux2,  0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_aux3,  0, EXPECTED_ITERATIONS * sizeof (double));
+      memset (device_param->exec_us_prev_aux4,  0, EXPECTED_ITERATIONS * sizeof (double));
+
+      device_param->at_status = AT_STATUS_PASSED;
+      device_param->at_rc = 0;
+
+      return 0;
+    }
+  }
+
   if (device_param->is_cuda == true)
   {
     if (hc_cuCtxPushCurrent (hashcat_ctx, device_param->cuda_context) == -1) return 0;
@@ -729,12 +787,19 @@ HC_API_CALL void *thread_autotune (void *p)
     if (hc_hipSetDevice (hashcat_ctx, device_param->hip_device) == -1) return 0;
   }
 
-  // check for autotune failure
+  // run full autotune
 
   if (autotune (hashcat_ctx, device_param) == 0)
   {
     device_param->at_status = AT_STATUS_PASSED;
     device_param->at_rc = 0;
+
+    // store result in cache for future sessions (only if real tuning happened)
+
+    if (all_fixed == false)
+    {
+      autotune_cache_store (hashcat_ctx, device_param, device_param->kernel_accel, device_param->kernel_loops, device_param->kernel_threads);
+    }
   }
 
   if (device_param->is_cuda == true)

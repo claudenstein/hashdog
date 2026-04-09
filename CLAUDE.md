@@ -1,3 +1,7 @@
+## Modes
+- Auto mode is activated by /automode and deactivated by /stop
+- When auto mode is ON, never pause, never ask — just keep working through tasks.md
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

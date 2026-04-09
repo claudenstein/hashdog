@@ -18,6 +18,7 @@
 
 #include "affinity.h"
 #include "autotune.h"
+#include "autotune_cache.h"
 #include "benchmark.h"
 #include "bitmap.h"
 #include "bridges.h"
@@ -1157,6 +1158,7 @@ int hashcat_init (hashcat_ctx_t *hashcat_ctx, void (*event) (const u32, struct h
     hashcat_ctx->event = event;
   }
 
+  hashcat_ctx->autotune_cache_ctx = (autotune_cache_ctx_t *)  hcmalloc (sizeof (autotune_cache_ctx_t));
   hashcat_ctx->bitmap_ctx         = (bitmap_ctx_t *)          hcmalloc (sizeof (bitmap_ctx_t));
   hashcat_ctx->brain_ctx          = (brain_ctx_t *)           hcmalloc (sizeof (brain_ctx_t));
   hashcat_ctx->bridge_ctx         = (bridge_ctx_t *)          hcmalloc (sizeof (bridge_ctx_t));
@@ -1194,6 +1196,7 @@ int hashcat_init (hashcat_ctx_t *hashcat_ctx, void (*event) (const u32, struct h
 
 void hashcat_destroy (hashcat_ctx_t *hashcat_ctx)
 {
+  hcfree (hashcat_ctx->autotune_cache_ctx);
   hcfree (hashcat_ctx->bitmap_ctx);
   hcfree (hashcat_ctx->brain_ctx);
   hcfree (hashcat_ctx->bridge_ctx);
@@ -1370,6 +1373,12 @@ int hashcat_session_init (hashcat_ctx_t *hashcat_ctx, const char *install_folder
    */
 
   if (dictstat_init (hashcat_ctx) == -1) return -1;
+
+  /**
+   * autotune cache init
+   */
+
+  if (autotune_cache_init (hashcat_ctx) == -1) return -1;
 
   /**
    * loopback init
@@ -1765,6 +1774,10 @@ int hashcat_session_execute (hashcat_ctx_t *hashcat_ctx)
 
   dictstat_read (hashcat_ctx);
 
+  // read autotune cache
+
+  autotune_cache_read (hashcat_ctx);
+
   // autodetect
 
   if (user_options->autodetect == true)
@@ -1934,6 +1947,10 @@ int hashcat_session_execute (hashcat_ctx_t *hashcat_ctx)
 
   dictstat_write (hashcat_ctx);
 
+  // final update autotune cache
+
+  autotune_cache_write (hashcat_ctx);
+
   // final logfile entry
 
   const time_t proc_stop = time (NULL);
@@ -2028,6 +2045,7 @@ int hashcat_session_destroy (hashcat_ctx_t *hashcat_ctx)
   #endif
   #endif
 
+  autotune_cache_destroy      (hashcat_ctx);
   debugfile_destroy           (hashcat_ctx);
   dictstat_destroy            (hashcat_ctx);
   folder_config_destroy       (hashcat_ctx);

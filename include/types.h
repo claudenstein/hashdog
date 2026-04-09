@@ -9,6 +9,7 @@
 #include "common.h"
 
 #include <stdio.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
@@ -2235,6 +2236,48 @@ typedef struct dictstat_ctx
 
 } dictstat_ctx_t;
 
+typedef struct autotune_cache_entry
+{
+  // key fields (must be contiguous and zero-initialized for memcmp)
+  char device_name[64];
+  int  hash_mode;
+  u32  attack_exec;
+  u32  device_processors;
+  u32  kernel_accel_min;
+  u32  kernel_accel_max;
+  u32  kernel_loops_min;
+  u32  kernel_loops_max;
+  u32  kernel_threads_min;
+  u32  kernel_threads_max;
+  u32  salt_iter;
+  u32  _key_padding;
+
+  // cached result
+  u32  kernel_accel;
+  u32  kernel_loops;
+  u32  kernel_threads;
+  u32  _val_padding;
+
+} autotune_cache_entry_t;
+
+#define AUTOTUNE_CACHE_KEY_SIZE offsetof (autotune_cache_entry_t, kernel_accel)
+
+typedef struct autotune_cache_ctx
+{
+  bool enabled;
+
+  char *filename;
+
+  autotune_cache_entry_t *base;
+
+  #if defined (_WIN)
+  u32    cnt;
+  #else
+  size_t cnt;
+  #endif
+
+} autotune_cache_ctx_t;
+
 typedef struct loopback_ctx
 {
   HCFILE  fp;
@@ -3242,6 +3285,7 @@ typedef struct module_ctx
 
 typedef struct hashcat_ctx
 {
+  autotune_cache_ctx_t  *autotune_cache_ctx;
   brain_ctx_t           *brain_ctx;
   bitmap_ctx_t          *bitmap_ctx;
   bridge_ctx_t          *bridge_ctx;
