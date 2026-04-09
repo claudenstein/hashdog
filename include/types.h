@@ -1487,6 +1487,7 @@ typedef struct hc_device_param
   pw_idx_t *pws_idx;
   u32      *pws_comp;
   u64       pws_cnt;
+  bool      pws_host_pinned; // true if pws_comp/pws_idx use pinned host memory
 
   pw_pre_t *pws_pre_buf;  // for slow candidates
   u64       pws_pre_cnt;

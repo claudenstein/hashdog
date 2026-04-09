@@ -244,7 +244,7 @@ but irrelevant for brute-force. The optimization strategy must be attack-mode aw
 
 ### Phase 2: Low-Risk Optimizations — IN PROGRESS
 - [x] Implement autotune result caching across sessions (2026-04-08)
-- [ ] Switch candidate buffers to pinned host memory
+- [x] Switch candidate buffers to pinned host memory (2026-04-08)
 - [ ] Batch rule output buffer allocation (pool allocator)
 - [ ] Explore mmap for core wordlist path
 
@@ -267,6 +267,30 @@ kernel launches, reducing autotune time to ~0ms.
 - Binary file format with version header for forward compatibility
 - Maximum 10,000 entries (covers hundreds of devices × hash modes)
 - Thread-safe: each device thread reads from shared cache; writes happen after all threads complete
+
+#### Pinned Host Memory for Candidate Buffers (2026-04-08)
+
+**Problem:** Host-to-device memory transfers for password candidate buffers (`pws_comp`,
+`pws_idx`) use regular `calloc`-allocated memory. Non-pinned transfers require an extra
+kernel-space copy to a DMA-capable staging buffer, reducing effective PCI-E bandwidth.
+
+**Solution:** Use `cuMemAllocHost` (CUDA) and `hipHostMalloc` (HIP) for the two hot-path
+candidate buffers. Pinned (page-locked) memory enables direct DMA transfers, bypassing
+the staging copy. Falls back to regular `hcmalloc` if pinned allocation fails or on
+OpenCL/Metal backends.
+
+**Design decisions:**
+- Only `pws_comp` and `pws_idx` are pinned — these are the two buffers transferred every
+  batch in `run_copy()`. Other buffers (`pws_pre_buf`, `pws_base_buf`, `combs_buf`) are
+  accessed less frequently and not worth the locked-page overhead.
+- `pws_host_pinned` flag on `hc_device_param_t` tracks allocation type for correct cleanup.
+- Graceful fallback: if pinned allocation fails (e.g., insufficient locked memory limit),
+  partial allocations are freed and regular memory is used.
+- Foundation for Phase 3: async double-buffered pipeline requires pinned memory for
+  overlapped DMA transfers.
+
+**Estimated impact:** 10-30% H2D transfer speedup. Most significant for fast hashes where
+transfer time is a larger fraction of total batch time.
 
 ### Phase 3: Pipeline Parallelism (High Impact, High Complexity)
 - [ ] Implement double-buffered candidate buffers per device

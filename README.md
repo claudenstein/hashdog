@@ -7,6 +7,7 @@
 **Phase 2: Low-Risk Optimizations (In Progress)**
 
 - **Autotune caching** — Persistent disk cache for autotuner results eliminates 10-30s startup cost per hash mode per device on subsequent runs. Cache key captures device identity, algorithm, and tuning parameter bounds. Stored at `~/.hashcat/hashcat.autotune`.
+- **Pinned host memory** — Candidate password buffers (`pws_comp`, `pws_idx`) use page-locked memory on CUDA/HIP backends for faster DMA-based H2D transfers, bypassing the kernel staging copy. Falls back gracefully on OpenCL/Metal.
 
 **Phase 1: Architectural Analysis (Complete)**
 

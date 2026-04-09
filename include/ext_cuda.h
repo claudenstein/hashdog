@@ -1306,6 +1306,8 @@ int hc_cuFuncSetAttribute      (void *hashcat_ctx, CUfunction hfunc, CUfunction_
 int hc_cuInit                  (void *hashcat_ctx, unsigned int Flags);
 int hc_cuLaunchKernel          (void *hashcat_ctx, CUfunction f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes, CUstream hStream, void **kernelParams, void **extra);
 int hc_cuMemAlloc              (void *hashcat_ctx, CUdeviceptr *dptr, size_t bytesize);
+int hc_cuMemAllocHost          (void *hashcat_ctx, void **pp, size_t bytesize);
+int hc_cuMemFreeHost           (void *hashcat_ctx, void *p);
 int hc_cuMemcpyDtoD            (void *hashcat_ctx, CUdeviceptr dstDevice, CUdeviceptr srcDevice, size_t ByteCount);
 int hc_cuMemcpyDtoH            (void *hashcat_ctx, void *dstHost, CUdeviceptr srcDevice, size_t ByteCount);
 int hc_cuMemcpyHtoD            (void *hashcat_ctx, CUdeviceptr dstDevice, const void *srcHost, size_t ByteCount);

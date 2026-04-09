@@ -16642,13 +16642,51 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
       device_param->h_tmps = h_tmps;
     }
 
-    u32 *pws_comp = (u32 *) hcmalloc (size_pws_comp);
+    // use pinned (page-locked) host memory for candidate buffers when possible
+    // pinned memory enables faster H2D DMA transfers on CUDA and HIP backends
 
-    device_param->pws_comp = pws_comp;
+    u32      *pws_comp = NULL;
+    pw_idx_t *pws_idx  = NULL;
+    bool      pws_host_pinned = false;
 
-    pw_idx_t *pws_idx = (pw_idx_t *) hcmalloc (size_pws_idx);
+    if (device_param->is_cuda == true)
+    {
+      if ((hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_comp, size_pws_comp) == 0)
+       && (hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_idx,  size_pws_idx)  == 0))
+      {
+        pws_host_pinned = true;
+      }
+      else
+      {
+        // fallback: free any partial pinned alloc, use regular memory
+        if (pws_comp) { hc_cuMemFreeHost (hashcat_ctx, pws_comp); pws_comp = NULL; }
+        if (pws_idx)  { hc_cuMemFreeHost (hashcat_ctx, pws_idx);  pws_idx  = NULL; }
+      }
+    }
 
-    device_param->pws_idx = pws_idx;
+    if (device_param->is_hip == true)
+    {
+      if ((hc_hipHostMalloc (hashcat_ctx, (void **) &pws_comp, size_pws_comp) == 0)
+       && (hc_hipHostMalloc (hashcat_ctx, (void **) &pws_idx,  size_pws_idx)  == 0))
+      {
+        pws_host_pinned = true;
+      }
+      else
+      {
+        if (pws_comp) { hc_hipHostFree (hashcat_ctx, pws_comp); pws_comp = NULL; }
+        if (pws_idx)  { hc_hipHostFree (hashcat_ctx, pws_idx);  pws_idx  = NULL; }
+      }
+    }
+
+    if (pws_host_pinned == false)
+    {
+      pws_comp = (u32 *)      hcmalloc (size_pws_comp);
+      pws_idx  = (pw_idx_t *) hcmalloc (size_pws_idx);
+    }
+
+    device_param->pws_comp        = pws_comp;
+    device_param->pws_idx         = pws_idx;
+    device_param->pws_host_pinned = pws_host_pinned;
 
     pw_t *combs_buf = (pw_t *) hccalloc (KERNEL_COMBS, sizeof (pw_t));
 
@@ -16967,8 +17005,27 @@ void backend_session_destroy (hashcat_ctx_t *hashcat_ctx)
     if (device_param->skipped == true) continue;
 
     hcfree_bridge_aligned (device_param->h_tmps);
-    hcfree (device_param->pws_comp);
-    hcfree (device_param->pws_idx);
+
+    if (device_param->pws_host_pinned == true)
+    {
+      if (device_param->is_cuda == true)
+      {
+        hc_cuMemFreeHost (hashcat_ctx, device_param->pws_comp);
+        hc_cuMemFreeHost (hashcat_ctx, device_param->pws_idx);
+      }
+
+      if (device_param->is_hip == true)
+      {
+        hc_hipHostFree (hashcat_ctx, device_param->pws_comp);
+        hc_hipHostFree (hashcat_ctx, device_param->pws_idx);
+      }
+    }
+    else
+    {
+      hcfree (device_param->pws_comp);
+      hcfree (device_param->pws_idx);
+    }
+
     hcfree (device_param->pws_pre_buf);
     hcfree (device_param->pws_base_buf);
     hcfree (device_param->combs_buf);

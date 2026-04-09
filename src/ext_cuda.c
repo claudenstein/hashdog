@@ -605,6 +605,60 @@ int hc_cuMemFree (void *hashcat_ctx, CUdeviceptr dptr)
 }
 
 
+int hc_cuMemAllocHost (void *hashcat_ctx, void **pp, size_t bytesize)
+{
+  backend_ctx_t *backend_ctx = ((hashcat_ctx_t *) hashcat_ctx)->backend_ctx;
+
+  CUDA_PTR *cuda = (CUDA_PTR *) backend_ctx->cuda;
+
+  const CUresult CU_err = cuda->cuMemAllocHost (pp, bytesize);
+
+  if (CU_err != CUDA_SUCCESS)
+  {
+    const char *pStr = NULL;
+
+    if (cuda->cuGetErrorString (CU_err, &pStr) == CUDA_SUCCESS)
+    {
+      event_log_error (hashcat_ctx, "cuMemAllocHost(): %s", pStr);
+    }
+    else
+    {
+      event_log_error (hashcat_ctx, "cuMemAllocHost(): %d", CU_err);
+    }
+
+    return -1;
+  }
+
+  return 0;
+}
+
+int hc_cuMemFreeHost (void *hashcat_ctx, void *p)
+{
+  backend_ctx_t *backend_ctx = ((hashcat_ctx_t *) hashcat_ctx)->backend_ctx;
+
+  CUDA_PTR *cuda = (CUDA_PTR *) backend_ctx->cuda;
+
+  const CUresult CU_err = cuda->cuMemFreeHost (p);
+
+  if (CU_err != CUDA_SUCCESS)
+  {
+    const char *pStr = NULL;
+
+    if (cuda->cuGetErrorString (CU_err, &pStr) == CUDA_SUCCESS)
+    {
+      event_log_error (hashcat_ctx, "cuMemFreeHost(): %s", pStr);
+    }
+    else
+    {
+      event_log_error (hashcat_ctx, "cuMemFreeHost(): %d", CU_err);
+    }
+
+    return -1;
+  }
+
+  return 0;
+}
+
 int hc_cuMemcpyDtoH (void *hashcat_ctx, void *dstHost, CUdeviceptr srcDevice, size_t ByteCount)
 {
   backend_ctx_t *backend_ctx = ((hashcat_ctx_t *) hashcat_ctx)->backend_ctx;

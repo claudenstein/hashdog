@@ -6,6 +6,7 @@
 #include "common.h"
 #include "types.h"
 #include "memory.h"
+#include "bitops.h"
 #include "event.h"
 #include "locking.h"
 #include "shared.h"

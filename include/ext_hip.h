@@ -558,6 +558,8 @@ typedef hipError_t (HIP_API_CALL *HIP_HIPINIT)                   (unsigned int);
 typedef hipError_t (HIP_API_CALL *HIP_HIPLAUNCHKERNEL)           (hipFunction_t, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, hipStream_t, void **, void **);
 typedef hipError_t (HIP_API_CALL *HIP_HIPMEMALLOC)               (hipDeviceptr_t *, size_t);
 typedef hipError_t (HIP_API_CALL *HIP_HIPMEMFREE)                (hipDeviceptr_t);
+typedef hipError_t (HIP_API_CALL *HIP_HIPHOSTMALLOC)             (void **, size_t, unsigned int);
+typedef hipError_t (HIP_API_CALL *HIP_HIPHOSTFREE)               (void *);
 typedef hipError_t (HIP_API_CALL *HIP_HIPMEMGETINFO)             (size_t *, size_t *);
 typedef hipError_t (HIP_API_CALL *HIP_HIPMEMCPYDTOD)             (hipDeviceptr_t, hipDeviceptr_t, size_t);
 typedef hipError_t (HIP_API_CALL *HIP_HIPMEMCPYDTOH)             (void *, hipDeviceptr_t, size_t);
@@ -618,6 +620,8 @@ typedef struct hc_hip_lib
   HIP_HIPLAUNCHKERNEL           hipLaunchKernel;
   HIP_HIPMEMALLOC               hipMemAlloc;
   HIP_HIPMEMFREE                hipMemFree;
+  HIP_HIPHOSTMALLOC             hipHostMalloc;
+  HIP_HIPHOSTFREE               hipHostFree;
   HIP_HIPMEMGETINFO             hipMemGetInfo;
   HIP_HIPMEMCPYDTOD             hipMemcpyDtoD;
   HIP_HIPMEMCPYDTOH             hipMemcpyDtoH;
@@ -684,6 +688,8 @@ int hc_hipFuncGetAttribute      (void *hashcat_ctx, int *pi, hipFunction_attribu
 int hc_hipInit                  (void *hashcat_ctx, unsigned int Flags);
 int hc_hipLaunchKernel          (void *hashcat_ctx, hipFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ, unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes, hipStream_t hStream, void **kernelParams, void **extra);
 int hc_hipMemAlloc              (void *hashcat_ctx, hipDeviceptr_t *dptr, size_t bytesize);
+int hc_hipHostMalloc            (void *hashcat_ctx, void **pp, size_t bytesize);
+int hc_hipHostFree              (void *hashcat_ctx, void *p);
 int hc_hipMemFree               (void *hashcat_ctx, hipDeviceptr_t dptr);
 int hc_hipMemGetInfo            (void *hashcat_ctx, size_t *free, size_t *total);
 int hc_hipMemcpyDtoD            (void *hashcat_ctx, hipDeviceptr_t dstDevice, hipDeviceptr_t srcDevice, size_t ByteCount);
