@@ -554,25 +554,73 @@ static int mangle_replace_class_d (char arr[RP_PASSWORD_SIZE], int arr_len, char
 
 static int mangle_replace_class_lh (char arr[RP_PASSWORD_SIZE], int arr_len, char newc)
 {
+#ifdef HASHDOG_USE_SSE2
+  int arr_pos = 0;
+  const __m128i v_0_minus_1 = _mm_set1_epi8 ('0' - 1);
+  const __m128i v_9_plus_1  = _mm_set1_epi8 ('9' + 1);
+  const __m128i v_a_minus_1 = _mm_set1_epi8 ('a' - 1);
+  const __m128i v_f_plus_1  = _mm_set1_epi8 ('f' + 1);
+  const __m128i v_new = _mm_set1_epi8 (newc);
+
+  for (; arr_pos + 16 <= arr_len; arr_pos += 16)
+  {
+    __m128i data = _mm_loadu_si128 ((const __m128i *) (arr + arr_pos));
+    __m128i is_digit = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_0_minus_1),
+                                       _mm_cmpgt_epi8 (v_9_plus_1, data));
+    __m128i is_af = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_a_minus_1),
+                                    _mm_cmpgt_epi8 (v_f_plus_1, data));
+    __m128i is_lhex = _mm_or_si128 (is_digit, is_af);
+    __m128i result = _mm_or_si128 (_mm_and_si128 (is_lhex, v_new),
+                                    _mm_andnot_si128 (is_lhex, data));
+    _mm_storeu_si128 ((__m128i *) (arr + arr_pos), result);
+  }
+  for (; arr_pos < arr_len; arr_pos++)
+  {
+    if (class_lower_hex (arr[arr_pos])) arr[arr_pos] = newc;
+  }
+#else
   for (int arr_pos = 0; arr_pos < arr_len; arr_pos++)
   {
     if (!class_lower_hex (arr[arr_pos])) continue;
-
     arr[arr_pos] = newc;
   }
-
+#endif
   return arr_len;
 }
 
 static int mangle_replace_class_uh (char arr[RP_PASSWORD_SIZE], int arr_len, char newc)
 {
+#ifdef HASHDOG_USE_SSE2
+  int arr_pos = 0;
+  const __m128i v_0_minus_1 = _mm_set1_epi8 ('0' - 1);
+  const __m128i v_9_plus_1  = _mm_set1_epi8 ('9' + 1);
+  const __m128i v_A_minus_1 = _mm_set1_epi8 ('A' - 1);
+  const __m128i v_F_plus_1  = _mm_set1_epi8 ('F' + 1);
+  const __m128i v_new = _mm_set1_epi8 (newc);
+
+  for (; arr_pos + 16 <= arr_len; arr_pos += 16)
+  {
+    __m128i data = _mm_loadu_si128 ((const __m128i *) (arr + arr_pos));
+    __m128i is_digit = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_0_minus_1),
+                                       _mm_cmpgt_epi8 (v_9_plus_1, data));
+    __m128i is_AF = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_A_minus_1),
+                                    _mm_cmpgt_epi8 (v_F_plus_1, data));
+    __m128i is_uhex = _mm_or_si128 (is_digit, is_AF);
+    __m128i result = _mm_or_si128 (_mm_and_si128 (is_uhex, v_new),
+                                    _mm_andnot_si128 (is_uhex, data));
+    _mm_storeu_si128 ((__m128i *) (arr + arr_pos), result);
+  }
+  for (; arr_pos < arr_len; arr_pos++)
+  {
+    if (class_upper_hex (arr[arr_pos])) arr[arr_pos] = newc;
+  }
+#else
   for (int arr_pos = 0; arr_pos < arr_len; arr_pos++)
   {
     if (!class_upper_hex (arr[arr_pos])) continue;
-
     arr[arr_pos] = newc;
   }
-
+#endif
   return arr_len;
 }
 
