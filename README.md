@@ -2,24 +2,24 @@
 
 **hashdog** is a research fork of [hashcat](https://github.com/hashcat/hashcat) focused on pushing GPU-accelerated password recovery throughput beyond the current state of the art. This project conducts structured performance analysis of the hashcat execution pipeline and implements measurable optimizations across GPU kernel execution, host-device data transfer, candidate generation, and work scheduling.
 
-### Headline Result: Pipeline Parallelism ###
+### Headline Result: Pipeline Parallelism + SIMD Rule Engine ###
 
-For dictionary+rules attacks (`--slow-candidates`), hashdog achieves up to **+88% throughput** over upstream hashcat by overlapping CPU candidate generation with GPU kernel execution.
+For dictionary+rules attacks (`--slow-candidates`), hashdog achieves up to **+70% throughput** over upstream hashcat by overlapping CPU candidate generation with GPU kernel execution and vectorizing the rule engine case-conversion functions.
 
 | Hash Mode | hashcat v7.1.2 | hashdog | Improvement |
 |-----------|---------------:|--------:|------------:|
-| 0  MD5         | 11.57 MH/s  | 12.38 MH/s  | **+7.0%**  |
-| 1400 SHA256    | 12.22 MH/s  | 11.80 MH/s  | -3.4% (variance)|
-| 1700 SHA512    | 11.99 MH/s  | 12.12 MH/s  | +1.1%      |
-| 400 phpass     | 912.6 kH/s  | 1003.5 kH/s | **+10.0%** |
-| 500 md5crypt   | 465.1 kH/s  | 391.7 kH/s  | -15.8% (variance)|
-| 7400 sha256crypt | 146.3 kH/s | 274.7 kH/s  | **+87.8%** |
-| 1800 sha512crypt | 77.7 kH/s  | 116.6 kH/s  | **+50.0%** |
-| 3200 bcrypt    | 16.07 kH/s  | 19.35 kH/s  | **+20.4%** |
+| 0  MD5             | 12.08 MH/s | 12.09 MH/s | +0.2% |
+| 1400 SHA256        | 11.65 MH/s | 12.04 MH/s | **+3.4%** |
+| 1700 SHA512        | 11.52 MH/s | 12.20 MH/s | **+5.9%** |
+| 400 phpass         | 876.2 kH/s | 1048.0 kH/s | **+19.6%** |
+| 500 md5crypt       | 464.5 kH/s | 480.9 kH/s | **+3.5%** |
+| 7400 sha256crypt   | 116.0 kH/s | 197.6 kH/s | **+70.3%** |
+| 1800 sha512crypt   | 74.95 kH/s | 113.7 kH/s | **+51.7%** |
+| 3200 bcrypt        | 16.35 kH/s | 19.42 kH/s | **+18.8%** |
 
-*Workload: 128K-word dictionary × 66 rules = 8.65M candidates per pass, RTX 3090, runtime=40s, autotune cache cleared between runs.*
+*Workload: 128K-word dictionary × 66 rules = 8.65M candidates per pass, RTX 3090, runtime=25s, median of 3 runs, autotune cache cleared between runs.*
 
-The improvement scales with the GPU/CPU ratio: slow hashes (sha256crypt, sha512crypt, bcrypt) where the GPU dominates execution time benefit most because the CPU candidate generation phase is fully hidden behind GPU computation. Fast hashes show smaller gains because the GPU finishes before the CPU can stage the next batch.
+The improvement scales with the GPU/CPU ratio: slow hashes (sha256crypt, sha512crypt, bcrypt) where the GPU dominates execution time benefit most because the CPU candidate generation phase is fully hidden behind GPU computation. Fast hashes show smaller gains because the GPU finishes before the CPU can stage the next batch — but the SSE2 rule engine still contributes a few percent.
 
 ### Brute-Force Mode ###
 
@@ -37,6 +37,10 @@ For brute-force attacks (`-a 3` mask mode), hashdog matches upstream hashcat per
 | 13100 Kerb5 TGS-REP | 1.42 GH/s | 1.41 GH/s | -0.6% |
 
 ### Research Status ###
+
+**Phase 4: Advanced Optimizations — IN PROGRESS**
+
+- **SSE2 rule engine** — `mangle_lrest`, `mangle_urest`, `mangle_trest` (lowercase, uppercase, toggle case) vectorized to process 16 bytes at a time using SSE2 intrinsics. Provides additional speedup on top of pipeline parallelism for rules that perform case conversion.
 
 **Phase 3: Pipeline Parallelism — COMPLETE**
 

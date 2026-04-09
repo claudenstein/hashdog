@@ -1,0 +1,21 @@
+=== hashcat vs hashdog: slow-candidates dict+rules ===
+Date: Thu Apr  9 05:42:57 AM -03 2026
+Wordlist: 128K words × 66 rules
+Runtime: 40s per test
+
+>>> Mode 0 (MD5)
+  hashcat: 12113600 H/s    hashdog: 12414500 H/s    improvement: +2.5%
+>>> Mode 1400 (SHA256)
+  hashcat: 11604300 H/s    hashdog: 11745500 H/s    improvement: +1.2%
+>>> Mode 1700 (SHA512)
+  hashcat: 11959600 H/s    hashdog: 12301700 H/s    improvement: +2.9%
+>>> Mode 400 (phpass)
+  hashcat: 912800 H/s    hashdog: 1006800 H/s    improvement: +10.3%
+>>> Mode 500 (md5crypt)
+  hashcat: 375100 H/s    hashdog: 480100 H/s    improvement: +28.0%
+>>> Mode 7400 (sha256crypt)
+  hashcat: 146900 H/s    hashdog: 198000 H/s    improvement: +34.8%
+>>> Mode 1800 (sha512crypt)
+  hashcat: 73038 H/s    hashdog: 108600 H/s    improvement: +48.7%
+>>> Mode 3200 (bcrypt)
+  hashcat: 16043 H/s    hashdog: 19346 H/s    improvement: +20.6%
