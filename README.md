@@ -1,4 +1,27 @@
-## *hashcat* ##
+## *hashdog* ##
+
+**hashdog** is a research fork of [hashcat](https://github.com/hashcat/hashcat) focused on pushing GPU-accelerated password recovery throughput beyond the current state of the art. This project conducts structured performance analysis of the hashcat execution pipeline and implements measurable optimizations across GPU kernel execution, host-device data transfer, candidate generation, and work scheduling.
+
+### Research Status ###
+
+**Phase 1: Architectural Analysis (Complete)**
+
+A full source-level decomposition of the hashcat execution pipeline identified six bottleneck domains, ranked by estimated impact:
+
+| Priority | Domain | Key Finding | Estimated Impact |
+|----------|--------|-------------|-----------------|
+| 1 | Pipeline stalls | GPU idles during candidate generation and H2D transfer (synchronous dispatch loop) | 20-40% for fast hashes |
+| 2 | Autotune startup | 10-30s per hash mode, results not cached across sessions | Startup latency |
+| 3 | Rule engine | CPU-side, not vectorized, per-candidate malloc overhead | 2-5x rule throughput |
+| 4 | Work scheduling | Mutex-serialized allocation, static proportional balancing, no work-stealing | Multi-GPU scaling |
+| 5 | Memory transfer | Non-pinned host memory, no async overlap with compute | 10-30% transfer speed |
+| 6 | Wordlist I/O | Core uses fread buffering; feed system already proves mmap viable | I/O latency |
+
+Full analysis: [research/thesis.md](research/thesis.md)
+
+---
+
+### Original hashcat ###
 
 **hashcat** is the world's fastest and most advanced password recovery utility, supporting five unique modes of attack for over 300 highly-optimized hashing algorithms. hashcat currently supports CPUs, GPUs, and other hardware accelerators on Linux, Windows, and macOS, and has facilities to help enable distributed password cracking.
 
