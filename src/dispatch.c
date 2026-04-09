@@ -623,6 +623,14 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
       u64 words_cur = 0;
 
       // pipeline state for overlapped CPU generation + GPU execution
+      // pipeline is enabled only if alternate buffers are allocated AND
+      // pipeline is enabled only if alternate device buffers exist (allocated when slow_candidates && enough GPU mem)
+
+      const bool pipeline_enabled = (device_param->pws_comp_alt != NULL)
+                                 && (device_param->pws_idx_alt != NULL)
+                                 && (device_param->pws_base_buf_alt != NULL)
+                                 && ((device_param->is_cuda == false) || (device_param->cuda_d_pws_comp_buf_alt != 0))
+                                 && ((device_param->is_hip  == false) || (device_param->hip_d_pws_comp_buf_alt  != 0));
 
       pipeline_gpu_ctx_t pipeline_gpu;
       hc_thread_t        pipeline_gpu_thread;
@@ -634,11 +642,14 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
       pipeline_gpu.device_param = device_param;
       pipeline_gpu.shutdown     = 0;
 
-      hc_thread_sem_init (pipeline_gpu.sem_work_ready);
-      hc_thread_sem_init (pipeline_gpu.sem_copy_done);
-      hc_thread_sem_init (pipeline_gpu.sem_batch_done);
+      if (pipeline_enabled)
+      {
+        hc_thread_sem_init (pipeline_gpu.sem_work_ready);
+        hc_thread_sem_init (pipeline_gpu.sem_copy_done);
+        hc_thread_sem_init (pipeline_gpu.sem_batch_done);
 
-      hc_thread_create (pipeline_gpu_thread, pipeline_gpu_worker, &pipeline_gpu);
+        hc_thread_create (pipeline_gpu_thread, pipeline_gpu_worker, &pipeline_gpu);
+      }
 
       #ifdef HASHDOG_PERF
       hc_timer_t _hd_pipeline_cracker_timer;
@@ -846,7 +857,7 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
         const u64 pws_cnt = device_param->pws_cnt;
 
-        if (pws_cnt)
+        if (pws_cnt && pipeline_enabled)
         {
           // pipeline: wait for PREVIOUS batch to finish before launching new one
           // This wait is AFTER generate, so CPU generation overlaps with GPU execution
@@ -947,6 +958,55 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
           device_param->pws_cnt      = 0;
           device_param->pws_base_cnt = 0;
         }
+        else if (pws_cnt)
+        {
+          // sequential fallback (pipeline disabled — alt buffers not available)
+
+          HASHDOG_TIMER_START (copy);
+
+          if (run_copy (hashcat_ctx, device_param, pws_cnt) == -1)
+          {
+            hc_fclose (&extra_info_straight.fp);
+            hcfree (hashcat_ctx_tmp->wl_data);
+            hcfree (hashcat_ctx_tmp);
+            return -1;
+          }
+
+          HASHDOG_TIMER_STOP (perf, time_copy_ms, copy);
+
+          HASHDOG_TIMER_START (cracker);
+
+          if (run_cracker (hashcat_ctx, device_param, -1, pws_cnt) == -1)
+          {
+            hc_fclose (&extra_info_straight.fp);
+            hcfree (hashcat_ctx_tmp->wl_data);
+            hcfree (hashcat_ctx_tmp);
+            return -1;
+          }
+
+          HASHDOG_TIMER_STOP (perf, time_cracker_ms, cracker);
+          HASHDOG_PERF_BATCH (perf, pws_cnt);
+
+          #ifdef WITH_BRAIN
+          if (user_options->brain_client == true)
+          {
+            if ((status_ctx->devices_status != STATUS_ABORTED)
+             && (status_ctx->devices_status != STATUS_ABORTED_RUNTIME)
+             && (status_ctx->devices_status != STATUS_QUIT)
+             && (status_ctx->devices_status != STATUS_BYPASS)
+             && (status_ctx->devices_status != STATUS_ERROR))
+            {
+              if (brain_client_commit (device_param, status_ctx) == false)
+              {
+                brain_client_disconnect (device_param);
+              }
+            }
+          }
+          #endif
+
+          device_param->pws_cnt      = 0;
+          device_param->pws_base_cnt = 0;
+        }
 
         if (device_param->speed_only_finish == true) break;
 
@@ -962,30 +1022,32 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
         if (words_fin == 0) break;
       }
 
-      // wait for final pipeline GPU batch if still active
+      // wait for final pipeline GPU batch if still active, then shutdown worker
 
-      if (pipeline_gpu_active)
+      if (pipeline_enabled)
       {
-        hc_thread_sem_wait (pipeline_gpu.sem_batch_done);
-        pipeline_gpu_active = false;
-
-        if (pipeline_gpu.rc == -1)
+        if (pipeline_gpu_active)
         {
-          pipeline_gpu.shutdown = 1;
-          hc_thread_sem_post (pipeline_gpu.sem_work_ready);
-          hc_thread_wait (1, &pipeline_gpu_thread);
-          hc_fclose (&extra_info_straight.fp);
-          hcfree (hashcat_ctx_tmp->wl_data);
-          hcfree (hashcat_ctx_tmp);
-          return -1;
+          hc_thread_sem_wait (pipeline_gpu.sem_batch_done);
+          pipeline_gpu_active = false;
+
+          if (pipeline_gpu.rc == -1)
+          {
+            pipeline_gpu.shutdown = 1;
+            hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+            hc_thread_wait (1, &pipeline_gpu_thread);
+            hc_fclose (&extra_info_straight.fp);
+            hcfree (hashcat_ctx_tmp->wl_data);
+            hcfree (hashcat_ctx_tmp);
+            return -1;
+          }
         }
+
+        // shutdown persistent GPU worker thread
+        pipeline_gpu.shutdown = 1;
+        hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+        hc_thread_wait (1, &pipeline_gpu_thread);
       }
-
-      // shutdown persistent GPU worker thread
-
-      pipeline_gpu.shutdown = 1;
-      hc_thread_sem_post (pipeline_gpu.sem_work_ready);
-      hc_thread_wait (1, &pipeline_gpu_thread);
 
       hc_fclose (&extra_info_straight.fp);
 

@@ -16577,13 +16577,30 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
       if (run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_tmps,          device_param->size_tmps)     == -1) return -1;
       if (run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_hooks,         device_param->size_hooks)    == -1) return -1;
 
-      // pipeline double-buffer alternates
+      // pipeline double-buffer alternates — only allocated if slow_candidates is enabled
+      // (the only path that benefits from pipeline parallelism). If allocation fails
+      // (e.g., GPU memory exhaustion on memory-heavy modes), gracefully fall back to
+      // single-buffer mode for this device.
 
-      if (hc_cuMemAlloc (hashcat_ctx, &device_param->cuda_d_pws_comp_buf_alt, size_pws_comp) == -1) return -1;
-      if (hc_cuMemAlloc (hashcat_ctx, &device_param->cuda_d_pws_idx_alt,      size_pws_idx)  == -1) return -1;
+      device_param->cuda_d_pws_comp_buf_alt = 0;
+      device_param->cuda_d_pws_idx_alt      = 0;
 
-      if (run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_pws_comp_buf_alt, device_param->size_pws_comp) == -1) return -1;
-      if (run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_pws_idx_alt,      device_param->size_pws_idx)  == -1) return -1;
+      if (user_options->slow_candidates == true)
+      {
+        if (hc_cuMemAlloc (hashcat_ctx, &device_param->cuda_d_pws_comp_buf_alt, size_pws_comp) == 0)
+        {
+          if (hc_cuMemAlloc (hashcat_ctx, &device_param->cuda_d_pws_idx_alt, size_pws_idx) == 0)
+          {
+            run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_pws_comp_buf_alt, device_param->size_pws_comp);
+            run_cuda_kernel_bzero (hashcat_ctx, device_param, device_param->cuda_d_pws_idx_alt,      device_param->size_pws_idx);
+          }
+          else
+          {
+            hc_cuMemFree (hashcat_ctx, device_param->cuda_d_pws_comp_buf_alt);
+            device_param->cuda_d_pws_comp_buf_alt = 0;
+          }
+        }
+      }
 
       if (hc_cuStreamCreate (hashcat_ctx, &device_param->cuda_stream_transfer, CU_STREAM_NON_BLOCKING) == -1) return -1;
       if (hc_cuEventCreate  (hashcat_ctx, &device_param->cuda_event_transfer,  CU_EVENT_DISABLE_TIMING) == -1) return -1;
@@ -16605,13 +16622,28 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
       if (run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_tmps,          device_param->size_tmps)     == -1) return -1;
       if (run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_hooks,         device_param->size_hooks)    == -1) return -1;
 
-      // pipeline double-buffer alternates
+      // pipeline double-buffer alternates — only when slow_candidates enabled
+      // graceful fallback if allocation fails
 
-      if (hc_hipMemAlloc (hashcat_ctx, &device_param->hip_d_pws_comp_buf_alt, size_pws_comp) == -1) return -1;
-      if (hc_hipMemAlloc (hashcat_ctx, &device_param->hip_d_pws_idx_alt,      size_pws_idx)  == -1) return -1;
+      device_param->hip_d_pws_comp_buf_alt = 0;
+      device_param->hip_d_pws_idx_alt      = 0;
 
-      if (run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_pws_comp_buf_alt, device_param->size_pws_comp) == -1) return -1;
-      if (run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_pws_idx_alt,      device_param->size_pws_idx)  == -1) return -1;
+      if (user_options->slow_candidates == true)
+      {
+        if (hc_hipMemAlloc (hashcat_ctx, &device_param->hip_d_pws_comp_buf_alt, size_pws_comp) == 0)
+        {
+          if (hc_hipMemAlloc (hashcat_ctx, &device_param->hip_d_pws_idx_alt, size_pws_idx) == 0)
+          {
+            run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_pws_comp_buf_alt, device_param->size_pws_comp);
+            run_hip_kernel_bzero (hashcat_ctx, device_param, device_param->hip_d_pws_idx_alt,      device_param->size_pws_idx);
+          }
+          else
+          {
+            hc_hipMemFree (hashcat_ctx, device_param->hip_d_pws_comp_buf_alt);
+            device_param->hip_d_pws_comp_buf_alt = 0;
+          }
+        }
+      }
 
       if (hc_hipStreamCreate (hashcat_ctx, &device_param->hip_stream_transfer) == -1) return -1;
     }
@@ -16710,43 +16742,47 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
     device_param->pws_host_pinned = pws_host_pinned;
 
     // pipeline double-buffer alternates for host-side candidate buffers
+    // only allocated when slow_candidates is enabled (the only path that benefits)
 
     u32      *pws_comp_alt = NULL;
     pw_idx_t *pws_idx_alt  = NULL;
     bool      pws_host_pinned_alt = false;
 
-    if (device_param->is_cuda == true)
+    if (user_options->slow_candidates == true)
     {
-      if ((hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_comp_alt, size_pws_comp) == 0)
-       && (hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_idx_alt,  size_pws_idx)  == 0))
+      if (device_param->is_cuda == true)
       {
-        pws_host_pinned_alt = true;
+        if ((hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_comp_alt, size_pws_comp) == 0)
+         && (hc_cuMemAllocHost (hashcat_ctx, (void **) &pws_idx_alt,  size_pws_idx)  == 0))
+        {
+          pws_host_pinned_alt = true;
+        }
+        else
+        {
+          if (pws_comp_alt) { hc_cuMemFreeHost (hashcat_ctx, pws_comp_alt); pws_comp_alt = NULL; }
+          if (pws_idx_alt)  { hc_cuMemFreeHost (hashcat_ctx, pws_idx_alt);  pws_idx_alt  = NULL; }
+        }
       }
-      else
-      {
-        if (pws_comp_alt) { hc_cuMemFreeHost (hashcat_ctx, pws_comp_alt); pws_comp_alt = NULL; }
-        if (pws_idx_alt)  { hc_cuMemFreeHost (hashcat_ctx, pws_idx_alt);  pws_idx_alt  = NULL; }
-      }
-    }
 
-    if (device_param->is_hip == true)
-    {
-      if ((hc_hipHostMalloc (hashcat_ctx, (void **) &pws_comp_alt, size_pws_comp) == 0)
-       && (hc_hipHostMalloc (hashcat_ctx, (void **) &pws_idx_alt,  size_pws_idx)  == 0))
+      if (device_param->is_hip == true)
       {
-        pws_host_pinned_alt = true;
+        if ((hc_hipHostMalloc (hashcat_ctx, (void **) &pws_comp_alt, size_pws_comp) == 0)
+         && (hc_hipHostMalloc (hashcat_ctx, (void **) &pws_idx_alt,  size_pws_idx)  == 0))
+        {
+          pws_host_pinned_alt = true;
+        }
+        else
+        {
+          if (pws_comp_alt) { hc_hipHostFree (hashcat_ctx, pws_comp_alt); pws_comp_alt = NULL; }
+          if (pws_idx_alt)  { hc_hipHostFree (hashcat_ctx, pws_idx_alt);  pws_idx_alt  = NULL; }
+        }
       }
-      else
-      {
-        if (pws_comp_alt) { hc_hipHostFree (hashcat_ctx, pws_comp_alt); pws_comp_alt = NULL; }
-        if (pws_idx_alt)  { hc_hipHostFree (hashcat_ctx, pws_idx_alt);  pws_idx_alt  = NULL; }
-      }
-    }
 
-    if (pws_host_pinned_alt == false)
-    {
-      pws_comp_alt = (u32 *)      hcmalloc (size_pws_comp);
-      pws_idx_alt  = (pw_idx_t *) hcmalloc (size_pws_idx);
+      if (pws_host_pinned_alt == false)
+      {
+        pws_comp_alt = (u32 *)      hcmalloc (size_pws_comp);
+        pws_idx_alt  = (pw_idx_t *) hcmalloc (size_pws_idx);
+      }
     }
 
     device_param->pws_comp_alt        = pws_comp_alt;
@@ -16784,9 +16820,14 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
 
     device_param->pws_base_buf = pws_base_buf;
 
-    // pipeline alternate for pws_base_buf
+    // pipeline alternate for pws_base_buf — only when slow_candidates enabled
 
-    pw_pre_t *pws_base_buf_alt = (pw_pre_t *) hcmalloc (size_pws_base);
+    pw_pre_t *pws_base_buf_alt = NULL;
+
+    if (user_options->slow_candidates == true)
+    {
+      pws_base_buf_alt = (pw_pre_t *) hcmalloc (size_pws_base);
+    }
 
     device_param->pws_base_buf_alt = pws_base_buf_alt;
 
@@ -17098,26 +17139,29 @@ void backend_session_destroy (hashcat_ctx_t *hashcat_ctx)
       hcfree (device_param->pws_idx);
     }
 
-    // free alternate host buffers
+    // free alternate host buffers (only if allocated — slow_candidates mode)
 
-    if (device_param->pws_host_pinned_alt == true)
+    if (device_param->pws_comp_alt != NULL || device_param->pws_idx_alt != NULL)
     {
-      if (device_param->is_cuda == true)
+      if (device_param->pws_host_pinned_alt == true)
       {
-        hc_cuMemFreeHost (hashcat_ctx, device_param->pws_comp_alt);
-        hc_cuMemFreeHost (hashcat_ctx, device_param->pws_idx_alt);
-      }
+        if (device_param->is_cuda == true)
+        {
+          if (device_param->pws_comp_alt) hc_cuMemFreeHost (hashcat_ctx, device_param->pws_comp_alt);
+          if (device_param->pws_idx_alt)  hc_cuMemFreeHost (hashcat_ctx, device_param->pws_idx_alt);
+        }
 
-      if (device_param->is_hip == true)
-      {
-        hc_hipHostFree (hashcat_ctx, device_param->pws_comp_alt);
-        hc_hipHostFree (hashcat_ctx, device_param->pws_idx_alt);
+        if (device_param->is_hip == true)
+        {
+          if (device_param->pws_comp_alt) hc_hipHostFree (hashcat_ctx, device_param->pws_comp_alt);
+          if (device_param->pws_idx_alt)  hc_hipHostFree (hashcat_ctx, device_param->pws_idx_alt);
+        }
       }
-    }
-    else
-    {
-      hcfree (device_param->pws_comp_alt);
-      hcfree (device_param->pws_idx_alt);
+      else
+      {
+        hcfree (device_param->pws_comp_alt);
+        hcfree (device_param->pws_idx_alt);
+      }
     }
 
     hcfree (device_param->pws_pre_buf);
