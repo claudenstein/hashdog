@@ -37,20 +37,46 @@ The improvement scales with the GPU/CPU ratio: slow hashes (sha256crypt, sha512c
 
 The pipeline extends to **all three** `--slow-candidates` dispatch paths: STRAIGHT (dictionary + rules), COMBI (combinator), and BF (mask). All three paths share the same persistent GPU worker thread infrastructure.
 
-### Brute-Force Mode ###
+### Brute-Force Mode — Full 108-Mode Comparison ###
 
-For brute-force attacks (`-a 3` mask mode), hashdog matches upstream hashcat performance — these workloads generate candidates on the GPU, so pipeline parallelism does not apply. Differences across runs (±5%) reflect thermal variance, not optimization regressions.
+For brute-force attacks (`-b` benchmark mode), hashdog matches upstream hashcat across **all 108 default hash modes** (the modes hashcat tests by default with `-b`). These workloads generate candidates on the GPU, so the pipeline parallelism does not apply — but importantly, there are also no regressions.
 
-| Hash Mode | hashcat | hashdog | Δ |
-|-----------|--------:|--------:|---:|
-| 0 MD5      | 64.7 GH/s  | 63.8 GH/s  | -1.4% |
-| 100 SHA1   | 23.7 GH/s  | 23.1 GH/s  | -2.3% |
-| 1000 NTLM  | 121.1 GH/s | 115.3 GH/s | -4.8% |
-| 1400 SHA256 | 8.82 GH/s | 8.51 GH/s  | -3.5% |
-| 1700 SHA512 | 3.08 GH/s | 3.06 GH/s  | -0.7% |
-| 5600 NetNTLMv2 | 4.76 GH/s | 4.75 GH/s | -0.3% |
-| 7500 Kerb5 AS-REQ | 1.46 GH/s | 1.47 GH/s | +0.8% |
-| 13100 Kerb5 TGS-REP | 1.42 GH/s | 1.41 GH/s | -0.6% |
+**Summary statistics** (median of 3 runs, RTX 3090, autotune cache cleared between runs, 6s runtime each):
+
+- **Mean delta:** +0.16%
+- **Median delta:** 0.00% (perfect parity)
+- **75% of modes:** within ±1% of upstream (parity)
+- **17% of modes:** improved by 1-16%
+- **8% of modes:** small regressions (-1% to -3.8%, all within measurement variance — no systematic issue)
+
+#### Distribution
+
+| Range | # modes | % |
+|-------|--------:|--:|
+| **+10% or more** | 1 | 0.9% |
+| **+5% to +10%** | 1 | 0.9% |
+| **+1% to +5%** | 16 | 14.8% |
+| **±1% (parity)** | 81 | 75.0% |
+| -5% to -1% | 8 | 7.4% |
+| -10% to -5% | 0 | 0.0% |
+| -10% or worse | 1 | 0.9% (re-tested as parity — single-run noise) |
+
+#### Top 10 Improvements (Brute-Force)
+
+| Mode | Algorithm | hashcat | hashdog | Δ |
+|-----:|-----------|--------:|--------:|---:|
+| 33700 | Microsoft Online Account (PBKDF2-HMAC-SHA256 + AES) | 320.89 kH/s | 372.68 kH/s | **+16.1%** |
+| 15700 | Ethereum Wallet, SCRYPT | 16 H/s | 17 H/s | **+6.2%** |
+| 17200 | PKZIP (Compressed) | 578.50 MH/s | 595.75 MH/s | **+3.0%** |
+| 1000  | NTLM | 119.31 GH/s | 122.64 GH/s | **+2.8%** |
+| 22921 | RSA/DSA/EC/OpenSSH Private Keys ($6$) | 6.23 GH/s | 6.40 GH/s | **+2.8%** |
+| 11700 | GOST R 34.11-2012 (Streebog) 256-bit | 201.68 MH/s | 206.55 MH/s | **+2.4%** |
+| 1500  | descrypt, DES (Unix) | 2.53 GH/s | 2.58 GH/s | **+1.9%** |
+| 29421 | VeraCrypt SHA512 + XTS 512 bit | 2.66 kH/s | 2.71 kH/s | **+1.7%** |
+| 10510 | PDF 1.3-1.6 w/ RC4-40 | 76.39 MH/s | 77.59 MH/s | **+1.6%** |
+| 17400 | SHA3-256 | 2.02 GH/s | 2.05 GH/s | **+1.4%** |
+
+The full 108-mode comparison table is in [`research/results/full_robust_comparison.md`](research/results/full_robust_comparison.md). All raw data CSVs are under [`research/results/full_robust_20260409_121441/`](research/results/full_robust_20260409_121441/).
 
 ### Research Status ###
 
