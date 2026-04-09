@@ -1501,6 +1501,8 @@ typedef struct hc_device_param
   pw_pre_t *pws_base_buf; // for debug mode
   u64       pws_base_cnt;
 
+  pw_pre_t *pws_base_buf_alt; // pipeline alternate for pws_base_buf
+
   void    *h_tmps; // we need this only for bridges
 
   u64     words_off;

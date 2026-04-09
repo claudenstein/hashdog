@@ -414,6 +414,124 @@ HC_API_CALL void *thread_calc_stdin (void *p)
   return 0;
 }
 
+// swap primary and alternate candidate buffers for pipeline double-buffering
+
+// pipeline GPU worker: persistent thread that processes run_copy + run_cracker
+// uses semaphores for low-overhead signaling instead of thread create/join per batch
+
+typedef struct pipeline_gpu_ctx
+{
+  hashcat_ctx_t     *hashcat_ctx;
+  hc_device_param_t *device_param;
+
+  // per-batch parameters (set by main thread before posting work_ready)
+  u64                pws_cnt;
+  u64                words_off;
+
+  // signaling
+  hc_thread_semaphore_t    sem_work_ready;   // main → worker: new batch available
+  hc_thread_semaphore_t    sem_copy_done;    // worker → main: H2D copy done, host bufs safe
+  hc_thread_semaphore_t    sem_batch_done;   // worker → main: GPU kernel done
+
+  volatile int       shutdown;         // signal worker to exit
+  int                rc;               // return code from GPU operations
+} pipeline_gpu_ctx_t;
+
+#if defined (_WIN32) || defined (__WIN32__)
+static HC_API_CALL DWORD pipeline_gpu_worker (void *p)
+#else
+static HC_API_CALL void *pipeline_gpu_worker (void *p)
+#endif
+{
+  pipeline_gpu_ctx_t *ctx = (pipeline_gpu_ctx_t *) p;
+
+  hc_device_param_t *device_param = ctx->device_param;
+
+  // push CUDA/HIP context once for this thread's lifetime
+
+  if (device_param->is_cuda == true)
+  {
+    if (hc_cuCtxPushCurrent (ctx->hashcat_ctx, device_param->cuda_context) == -1)
+    {
+      ctx->rc = -1;
+      return 0;
+    }
+  }
+
+  if (device_param->is_hip == true)
+  {
+    if (hc_hipSetDevice (ctx->hashcat_ctx, device_param->hip_device) == -1)
+    {
+      ctx->rc = -1;
+      return 0;
+    }
+  }
+
+  while (1)
+  {
+    // wait for work from main thread
+    hc_thread_sem_wait (ctx->sem_work_ready);
+
+    if (ctx->shutdown) break;
+
+    ctx->rc = 0;
+
+    // H2D transfer
+    if (run_copy (ctx->hashcat_ctx, device_param, ctx->pws_cnt) == -1)
+    {
+      ctx->rc = -1;
+      hc_thread_sem_post (ctx->sem_copy_done);
+      hc_thread_sem_post (ctx->sem_batch_done);
+      continue;
+    }
+
+    // signal: host buffers safe to swap
+    hc_thread_sem_post (ctx->sem_copy_done);
+
+    // GPU kernel execution (blocks until GPU finishes)
+    if (run_cracker (ctx->hashcat_ctx, device_param, ctx->words_off, ctx->pws_cnt) == -1)
+    {
+      ctx->rc = -1;
+    }
+
+    // signal: batch complete
+    hc_thread_sem_post (ctx->sem_batch_done);
+  }
+
+  if (device_param->is_cuda == true)
+  {
+    hc_cuCtxPopCurrent (ctx->hashcat_ctx, &device_param->cuda_context);
+  }
+
+  return 0;
+}
+
+// swap primary and alternate candidate buffers for pipeline double-buffering
+
+static void pws_swap_buffers (hc_device_param_t *device_param)
+{
+  // swap host-side pointers
+
+  u32 *tmp_comp        = device_param->pws_comp;
+  device_param->pws_comp     = device_param->pws_comp_alt;
+  device_param->pws_comp_alt = tmp_comp;
+
+  pw_idx_t *tmp_idx    = device_param->pws_idx;
+  device_param->pws_idx      = device_param->pws_idx_alt;
+  device_param->pws_idx_alt  = tmp_idx;
+
+  bool tmp_pinned      = device_param->pws_host_pinned;
+  device_param->pws_host_pinned     = device_param->pws_host_pinned_alt;
+  device_param->pws_host_pinned_alt = tmp_pinned;
+
+  // NOTE: pws_base_buf and device-side pointers are NOT swapped here.
+  // pws_base_buf is accessed by run_cracker (check_cracked → outfile) from the GPU thread.
+  // device-side pointers are accessed by run_cracker for password reconstruction (D2H reads).
+  // Both are swapped after the GPU thread joins in the dispatch loop.
+
+  device_param->pws_buf_idx = 1 - device_param->pws_buf_idx;
+}
+
 static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 {
   user_options_t       *user_options       = hashcat_ctx->user_options;
@@ -504,6 +622,29 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
       u64 words_cur = 0;
 
+      // pipeline state for overlapped CPU generation + GPU execution
+
+      pipeline_gpu_ctx_t pipeline_gpu;
+      hc_thread_t        pipeline_gpu_thread;
+      bool               pipeline_gpu_active = false;
+
+      memset (&pipeline_gpu, 0, sizeof (pipeline_gpu));
+
+      pipeline_gpu.hashcat_ctx  = hashcat_ctx;
+      pipeline_gpu.device_param = device_param;
+      pipeline_gpu.shutdown     = 0;
+
+      hc_thread_sem_init (pipeline_gpu.sem_work_ready);
+      hc_thread_sem_init (pipeline_gpu.sem_copy_done);
+      hc_thread_sem_init (pipeline_gpu.sem_batch_done);
+
+      hc_thread_create (pipeline_gpu_thread, pipeline_gpu_worker, &pipeline_gpu);
+
+      #ifdef HASHDOG_PERF
+      hc_timer_t _hd_pipeline_cracker_timer;
+      hc_timer_set (&_hd_pipeline_cracker_timer);
+      #endif
+
       while (status_ctx->run_thread_level1 == true)
       {
         #ifdef HASHDOG_PERF
@@ -511,6 +652,10 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
         #endif
 
         u64 words_fin = 0;
+
+        // pipeline: clear the FREE buffer set (not the one the GPU is using)
+        // If pipeline is active, our host pointers already point to the free set
+        // (swapped after GPU launch). If not active, we just clear normally.
 
         memset (device_param->pws_comp,     0, device_param->size_pws_comp);
         memset (device_param->pws_idx,      0, device_param->size_pws_idx);
@@ -694,7 +839,7 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
         }
 
         //
-        // flush
+        // flush — pipeline: launch GPU in background, swap buffers, overlap with next generate
         //
 
         HASHDOG_TIMER_STOP (perf, time_generate_ms, generate);
@@ -703,51 +848,100 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
         if (pws_cnt)
         {
+          // pipeline: wait for PREVIOUS batch to finish before launching new one
+          // This wait is AFTER generate, so CPU generation overlaps with GPU execution
+
+          if (pipeline_gpu_active)
+          {
+            hc_thread_sem_wait (pipeline_gpu.sem_batch_done);
+
+            #ifdef HASHDOG_PERF
+            perf->time_cracker_ms += hc_timer_get (_hd_pipeline_cracker_timer);
+            HASHDOG_PERF_BATCH (perf, pipeline_gpu.pws_cnt);
+            #endif
+
+            if (pipeline_gpu.rc == -1)
+            {
+              pipeline_gpu.shutdown = 1;
+              hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+              hc_thread_wait (1, &pipeline_gpu_thread);
+              hc_fclose (&extra_info_straight.fp);
+              hcfree (hashcat_ctx_tmp->wl_data);
+              hcfree (hashcat_ctx_tmp);
+              return -1;
+            }
+
+            #ifdef WITH_BRAIN
+            if (user_options->brain_client == true)
+            {
+              if ((status_ctx->devices_status != STATUS_ABORTED)
+               && (status_ctx->devices_status != STATUS_ABORTED_RUNTIME)
+               && (status_ctx->devices_status != STATUS_QUIT)
+               && (status_ctx->devices_status != STATUS_BYPASS)
+               && (status_ctx->devices_status != STATUS_ERROR))
+              {
+                if (brain_client_commit (device_param, status_ctx) == false)
+                {
+                  brain_client_disconnect (device_param);
+                }
+              }
+            }
+            #endif
+
+            // swap device-side pointers + pws_base_buf (GPU thread done accessing them)
+
+            pw_pre_t *tmp_base = device_param->pws_base_buf;
+            device_param->pws_base_buf     = device_param->pws_base_buf_alt;
+            device_param->pws_base_buf_alt = tmp_base;
+
+            if (device_param->is_cuda == true)
+            {
+              CUdeviceptr tmp_d;
+              tmp_d = device_param->cuda_d_pws_comp_buf;
+              device_param->cuda_d_pws_comp_buf     = device_param->cuda_d_pws_comp_buf_alt;
+              device_param->cuda_d_pws_comp_buf_alt = tmp_d;
+              tmp_d = device_param->cuda_d_pws_idx;
+              device_param->cuda_d_pws_idx     = device_param->cuda_d_pws_idx_alt;
+              device_param->cuda_d_pws_idx_alt = tmp_d;
+            }
+
+            if (device_param->is_hip == true)
+            {
+              hipDeviceptr_t tmp_d;
+              tmp_d = device_param->hip_d_pws_comp_buf;
+              device_param->hip_d_pws_comp_buf     = device_param->hip_d_pws_comp_buf_alt;
+              device_param->hip_d_pws_comp_buf_alt = tmp_d;
+              tmp_d = device_param->hip_d_pws_idx;
+              device_param->hip_d_pws_idx     = device_param->hip_d_pws_idx_alt;
+              device_param->hip_d_pws_idx_alt = tmp_d;
+            }
+
+            pipeline_gpu_active = false;
+          }
+
+          // post work to persistent GPU worker thread
+
+          pipeline_gpu.pws_cnt   = pws_cnt;
+          pipeline_gpu.words_off = -1;
+
           HASHDOG_TIMER_START (copy);
 
-          if (run_copy (hashcat_ctx, device_param, pws_cnt) == -1)
-          {
-            hc_fclose (&extra_info_straight.fp);
+          hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+          pipeline_gpu_active = true;
 
-            hcfree (hashcat_ctx_tmp->wl_data);
-            hcfree (hashcat_ctx_tmp);
+          // wait for H2D copy to complete (host buffers safe to swap after this)
 
-            return -1;
-          }
+          hc_thread_sem_wait (pipeline_gpu.sem_copy_done);
 
           HASHDOG_TIMER_STOP (perf, time_copy_ms, copy);
 
-          HASHDOG_TIMER_START (cracker);
+          // swap HOST-SIDE buffers so next generation writes to the free buffer set
+          // device-side + pws_base_buf are swapped AFTER GPU thread joins (above)
 
-          if (run_cracker (hashcat_ctx, device_param, -1, pws_cnt) == -1)
-          {
-            hc_fclose (&extra_info_straight.fp);
+          pws_swap_buffers (device_param);
 
-            hcfree (hashcat_ctx_tmp->wl_data);
-            hcfree (hashcat_ctx_tmp);
-
-            return -1;
-          }
-
-          HASHDOG_TIMER_STOP (perf, time_cracker_ms, cracker);
-
-          HASHDOG_PERF_BATCH (perf, pws_cnt);
-
-          #ifdef WITH_BRAIN
-          if (user_options->brain_client == true)
-          {
-            if ((status_ctx->devices_status != STATUS_ABORTED)
-             && (status_ctx->devices_status != STATUS_ABORTED_RUNTIME)
-             && (status_ctx->devices_status != STATUS_QUIT)
-             && (status_ctx->devices_status != STATUS_BYPASS)
-             && (status_ctx->devices_status != STATUS_ERROR))
-            {
-              if (brain_client_commit (device_param, status_ctx) == false)
-              {
-                brain_client_disconnect (device_param);
-              }
-            }
-          }
+          #ifdef HASHDOG_PERF
+          hc_timer_set (&_hd_pipeline_cracker_timer);
           #endif
 
           device_param->pws_cnt      = 0;
@@ -767,6 +961,31 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
         if (words_fin == 0) break;
       }
+
+      // wait for final pipeline GPU batch if still active
+
+      if (pipeline_gpu_active)
+      {
+        hc_thread_sem_wait (pipeline_gpu.sem_batch_done);
+        pipeline_gpu_active = false;
+
+        if (pipeline_gpu.rc == -1)
+        {
+          pipeline_gpu.shutdown = 1;
+          hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+          hc_thread_wait (1, &pipeline_gpu_thread);
+          hc_fclose (&extra_info_straight.fp);
+          hcfree (hashcat_ctx_tmp->wl_data);
+          hcfree (hashcat_ctx_tmp);
+          return -1;
+        }
+      }
+
+      // shutdown persistent GPU worker thread
+
+      pipeline_gpu.shutdown = 1;
+      hc_thread_sem_post (pipeline_gpu.sem_work_ready);
+      hc_thread_wait (1, &pipeline_gpu_thread);
 
       hc_fclose (&extra_info_straight.fp);
 

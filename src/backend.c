@@ -16784,6 +16784,12 @@ int backend_session_begin (hashcat_ctx_t *hashcat_ctx)
 
     device_param->pws_base_buf = pws_base_buf;
 
+    // pipeline alternate for pws_base_buf
+
+    pw_pre_t *pws_base_buf_alt = (pw_pre_t *) hcmalloc (size_pws_base);
+
+    device_param->pws_base_buf_alt = pws_base_buf_alt;
+
     /**
      * kernel args
      */
@@ -17116,6 +17122,7 @@ void backend_session_destroy (hashcat_ctx_t *hashcat_ctx)
 
     hcfree (device_param->pws_pre_buf);
     hcfree (device_param->pws_base_buf);
+    hcfree (device_param->pws_base_buf_alt);
     hcfree (device_param->combs_buf);
     hcfree (device_param->hooks_buf);
     hcfree (device_param->scratch_buf);
