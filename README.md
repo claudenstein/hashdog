@@ -63,7 +63,7 @@ A full source-level decomposition of the hashcat execution pipeline identified s
 |----------|--------|-------------|--------|
 | 1 | Pipeline stalls | GPU idles during candidate generation and H2D transfer | **Solved (Phase 3)** |
 | 2 | Autotune startup | 10-30s per hash mode, results not cached across sessions | **Solved (Phase 2)** |
-| 3 | Rule engine | CPU-side, not vectorized, per-candidate malloc overhead | Partial (malloc fixed; SIMD pending) |
+| 3 | Rule engine | CPU-side, not vectorized, per-candidate malloc overhead | **Solved** (malloc + SSE2 case ops in Phase 4) |
 | 4 | Work scheduling | Mutex-serialized allocation, static proportional balancing | Phase 4 |
 | 5 | Memory transfer | Non-pinned host memory, no async overlap with compute | **Solved (Phase 2 — pinned memory)** |
 | 6 | Wordlist I/O | Core uses fread buffering | Deferred (not a bottleneck) |
