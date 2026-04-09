@@ -10,6 +10,11 @@
 #include "rp.h"
 #include "rp_cpu.h"
 
+#if defined (__SSE2__) && !defined (__APPLE__)
+#include <emmintrin.h>
+#define HASHDOG_USE_SSE2 1
+#endif
+
 #define NEXT_RULEPOS(rp)      if (++(rp) == rule_len) return (RULE_RC_SYNTAX_ERROR)
 #define NEXT_RPTOI(r,rp,up)   if (((up) = conv_pos ((r)[(rp)], pos_mem)) == -1) return (RULE_RC_SYNTAX_ERROR)
 
@@ -95,22 +100,81 @@ static int mangle_toggle_at_sep (char arr[RP_PASSWORD_SIZE], int arr_len, char c
 
 static int mangle_lrest (char arr[RP_PASSWORD_SIZE], int arr_len)
 {
-  for (int pos = 0; pos < arr_len; pos++) MANGLE_LOWER_AT (arr, pos);
+#ifdef HASHDOG_USE_SSE2
+  // Vectorized: process 16 bytes at a time. arr is RP_PASSWORD_SIZE (256) bytes,
+  // so reading past arr_len up to a 16-byte boundary is always safe within the buffer.
+  // Bytes past arr_len are zero (memset by caller) and are not modified by this op.
+  int pos = 0;
+  const __m128i v_A_minus_1 = _mm_set1_epi8 ('A' - 1);
+  const __m128i v_Z_plus_1  = _mm_set1_epi8 ('Z' + 1);
+  const __m128i v_flip      = _mm_set1_epi8 (0x20);
 
+  for (; pos + 16 <= arr_len; pos += 16)
+  {
+    __m128i data = _mm_loadu_si128 ((const __m128i *) (arr + pos));
+    // is_upper = (data > 'A'-1) AND (data < 'Z'+1)
+    __m128i ge_A = _mm_cmpgt_epi8 (data, v_A_minus_1);
+    __m128i lt_Zp1 = _mm_cmpgt_epi8 (v_Z_plus_1, data);
+    __m128i mask = _mm_and_si128 (ge_A, lt_Zp1);
+    __m128i flip = _mm_and_si128 (mask, v_flip);
+    _mm_storeu_si128 ((__m128i *) (arr + pos), _mm_xor_si128 (data, flip));
+  }
+  for (; pos < arr_len; pos++) MANGLE_LOWER_AT (arr, pos);
+#else
+  for (int pos = 0; pos < arr_len; pos++) MANGLE_LOWER_AT (arr, pos);
+#endif
   return arr_len;
 }
 
 static int mangle_urest (char arr[RP_PASSWORD_SIZE], int arr_len)
 {
-  for (int pos = 0; pos < arr_len; pos++) MANGLE_UPPER_AT (arr, pos);
+#ifdef HASHDOG_USE_SSE2
+  int pos = 0;
+  const __m128i v_a_minus_1 = _mm_set1_epi8 ('a' - 1);
+  const __m128i v_z_plus_1  = _mm_set1_epi8 ('z' + 1);
+  const __m128i v_flip      = _mm_set1_epi8 (0x20);
 
+  for (; pos + 16 <= arr_len; pos += 16)
+  {
+    __m128i data = _mm_loadu_si128 ((const __m128i *) (arr + pos));
+    __m128i ge_a = _mm_cmpgt_epi8 (data, v_a_minus_1);
+    __m128i lt_zp1 = _mm_cmpgt_epi8 (v_z_plus_1, data);
+    __m128i mask = _mm_and_si128 (ge_a, lt_zp1);
+    __m128i flip = _mm_and_si128 (mask, v_flip);
+    _mm_storeu_si128 ((__m128i *) (arr + pos), _mm_xor_si128 (data, flip));
+  }
+  for (; pos < arr_len; pos++) MANGLE_UPPER_AT (arr, pos);
+#else
+  for (int pos = 0; pos < arr_len; pos++) MANGLE_UPPER_AT (arr, pos);
+#endif
   return arr_len;
 }
 
 static int mangle_trest (char arr[RP_PASSWORD_SIZE], int arr_len)
 {
-  for (int pos = 0; pos < arr_len; pos++) MANGLE_TOGGLE_AT (arr, pos);
+#ifdef HASHDOG_USE_SSE2
+  int pos = 0;
+  const __m128i v_A_minus_1 = _mm_set1_epi8 ('A' - 1);
+  const __m128i v_Z_plus_1  = _mm_set1_epi8 ('Z' + 1);
+  const __m128i v_a_minus_1 = _mm_set1_epi8 ('a' - 1);
+  const __m128i v_z_plus_1  = _mm_set1_epi8 ('z' + 1);
+  const __m128i v_flip      = _mm_set1_epi8 (0x20);
 
+  for (; pos + 16 <= arr_len; pos += 16)
+  {
+    __m128i data = _mm_loadu_si128 ((const __m128i *) (arr + pos));
+    __m128i is_upper = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_A_minus_1),
+                                       _mm_cmpgt_epi8 (v_Z_plus_1, data));
+    __m128i is_lower = _mm_and_si128 (_mm_cmpgt_epi8 (data, v_a_minus_1),
+                                       _mm_cmpgt_epi8 (v_z_plus_1, data));
+    __m128i is_alpha = _mm_or_si128 (is_upper, is_lower);
+    __m128i flip = _mm_and_si128 (is_alpha, v_flip);
+    _mm_storeu_si128 ((__m128i *) (arr + pos), _mm_xor_si128 (data, flip));
+  }
+  for (; pos < arr_len; pos++) MANGLE_TOGGLE_AT (arr, pos);
+#else
+  for (int pos = 0; pos < arr_len; pos++) MANGLE_TOGGLE_AT (arr, pos);
+#endif
   return arr_len;
 }
 
