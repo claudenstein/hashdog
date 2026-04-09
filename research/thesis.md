@@ -356,11 +356,42 @@ thread start, avoiding per-batch context overhead.
 (CPU-dominant, 67% CPU time), the GPU execution (33%) is hidden by CPU generation.
 The smaller improvement for bcrypt reflects the smaller ratio of GPU-to-total time.
 
-### Phase 4: Advanced Optimizations
-- [ ] SIMD-vectorized rule engine
-- [ ] Adaptive work scheduling (replace static proportional with runtime feedback)
+### Phase 4: Advanced Optimizations — IN PROGRESS
+- [x] SSE2-vectorized case-conversion mangle functions (lrest, urest, trest) (2026-04-09)
+- [ ] Extend SIMD to additional rule operations (replace, reverse, etc.)
+- [ ] Adaptive work scheduling (requires multi-GPU testing)
+- [ ] Extend pipeline parallelism to COMBI and BF slow_candidates paths
 - [ ] Kernel specialization for common GPU architectures
-- [ ] Investigate kernel fusion opportunities for fast hashes
+
+#### SSE2 Rule Engine (2026-04-09)
+
+**Implementation:** `mangle_lrest`, `mangle_urest`, and `mangle_trest` (lowercase-rest,
+uppercase-rest, toggle-case-rest) vectorized with SSE2 to process 16 bytes at a time.
+Uses `_mm_cmpgt_epi8` to detect alphabetic characters and `_mm_xor_si128` to flip the
+case bit (0x20).
+
+**Correctness:** Validated against scalar implementation with 4 hash modes × 4 rule
+types (l, u, t, c) — all selftests pass.
+
+**Impact:** Small for general rule sets (best66.rule has 1 SIMD-friendly rule out of 90).
+Significant for case-conversion-heavy rule sets where the SIMD path can be 4-8x faster
+than the scalar loop. Most useful in combination with pipeline parallelism for fast hashes.
+
+#### Final Comparison Summary (2026-04-09)
+
+Median of 3 runs, 25s runtime, 128K wordlist × 66 rules, RTX 3090, autotune cache cleared
+between runs:
+
+| Hash Mode | hashcat | hashdog | Δ |
+|-----------|--------:|--------:|---:|
+| 0 MD5 | 12.08 MH/s | 12.09 MH/s | +0.2% |
+| 1400 SHA256 | 11.65 MH/s | 12.04 MH/s | +3.4% |
+| 1700 SHA512 | 11.52 MH/s | 12.20 MH/s | +5.9% |
+| 400 phpass | 876.2 kH/s | 1048.0 kH/s | +19.6% |
+| 500 md5crypt | 464.5 kH/s | 480.9 kH/s | +3.5% |
+| 7400 sha256crypt | 116.0 kH/s | 197.6 kH/s | +70.3% |
+| 1800 sha512crypt | 74.95 kH/s | 113.7 kH/s | +51.7% |
+| 3200 bcrypt | 16.35 kH/s | 19.42 kH/s | +18.8% |
 
 ---
 
