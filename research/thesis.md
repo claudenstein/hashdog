@@ -292,11 +292,51 @@ OpenCL/Metal backends.
 **Estimated impact:** 10-30% H2D transfer speedup. Most significant for fast hashes where
 transfer time is a larger fraction of total batch time.
 
-### Phase 3: Pipeline Parallelism (High Impact, High Complexity)
-- [ ] Implement double-buffered candidate buffers per device
-- [ ] Add async memory transfer support (CUDA streams / OpenCL events)
+### Phase 3: Pipeline Parallelism (High Impact, High Complexity) — IN PROGRESS
+- [x] Implement double-buffered candidate buffers per device (2026-04-08)
+- [x] Add async memory transfer primitives (CUDA streams + events, HIP streams) (2026-04-08)
 - [ ] Restructure dispatch loop for overlapped execution
 - [ ] Validate correctness under multi-GPU configurations
+
+#### Double-Buffer Infrastructure (2026-04-08)
+
+**Implemented:** All buffer infrastructure for pipeline parallelism is now allocated:
+
+- **Host side:** Alternate pinned host buffers (`pws_comp_alt`, `pws_idx_alt`) per device
+- **CUDA device side:** Alternate device buffers (`cuda_d_pws_comp_buf_alt`, `cuda_d_pws_idx_alt`),
+  dedicated transfer stream (`cuda_stream_transfer`), transfer completion event (`cuda_event_transfer`)
+- **HIP device side:** Alternate device buffers + dedicated transfer stream
+
+**Dispatch loop restructuring design (not yet implemented):**
+
+The current sequential dispatch flow per device thread:
+```
+fill host buffer → run_copy (H2D, blocking) → run_cracker (GPU, blocking) → repeat
+```
+
+Target pipelined flow with buffer ping-pong:
+```
+Batch 0 (buf A):  fill(A) → H2D(A) → kernel(A) launch
+Batch 1 (buf B):  fill(B) ∥ kernel(A) → wait kernel(A) → swap → H2D(B) → kernel(B) launch
+Batch 2 (buf A):  fill(A) ∥ kernel(B) → wait kernel(B) → swap → H2D(A) → kernel(A) launch
+...
+```
+
+Key overlap: CPU candidate generation for batch N+1 runs concurrently with GPU kernel
+execution for batch N. The `pws_buf_idx` field tracks which buffer set (0 or 1) is active.
+
+**Implementation requirements for dispatch loop restructuring:**
+1. The dictionary dispatch path in `calc()` (dispatch.c ~1660-1896) fills candidates into
+   `pws_comp`/`pws_idx`, then flushes with `run_copy` + `run_cracker`
+2. The flush must be split: launch kernel async, swap to alternate buffers, continue filling
+3. Before reusing a buffer set, wait for the kernel that consumed it to complete
+4. `run_copy()` must accept a buffer index parameter to select primary vs. alternate device buffers
+5. The kernel parameter `cuda_d_pws_comp_buf` (passed as `kernel_params[0]`) must point to the
+   active buffer set — since `kernel_params` stores `&cuda_d_pws_comp_buf`, swapping the pointer
+   value before launch automatically selects the right buffer
+
+**Risk assessment:** The dispatch loop restructuring touches the most critical hot path.
+Must validate with full test suite (`tools/test.sh -m all`) before merging.
 
 ### Phase 4: Advanced Optimizations
 - [ ] SIMD-vectorized rule engine

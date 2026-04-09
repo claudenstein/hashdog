@@ -1489,6 +1489,12 @@ typedef struct hc_device_param
   u64       pws_cnt;
   bool      pws_host_pinned; // true if pws_comp/pws_idx use pinned host memory
 
+  // double-buffer alternates for pipeline parallelism
+  pw_idx_t *pws_idx_alt;
+  u32      *pws_comp_alt;
+  bool      pws_host_pinned_alt;
+  int       pws_buf_idx;     // 0 or 1: which buffer set is current
+
   pw_pre_t *pws_pre_buf;  // for slow candidates
   u64       pws_pre_cnt;
 
@@ -1659,6 +1665,12 @@ typedef struct hc_device_param
   CUdeviceptr       cuda_d_pws_amp_buf;
   CUdeviceptr       cuda_d_pws_comp_buf;
   CUdeviceptr       cuda_d_pws_idx;
+
+  // double-buffer alternates for pipeline parallelism
+  CUdeviceptr       cuda_d_pws_comp_buf_alt;
+  CUdeviceptr       cuda_d_pws_idx_alt;
+  CUstream          cuda_stream_transfer;
+  CUevent           cuda_event_transfer;
   CUdeviceptr       cuda_d_rules;
   CUdeviceptr       cuda_d_rules_c;
   CUdeviceptr       cuda_d_combs;
@@ -1742,6 +1754,12 @@ typedef struct hc_device_param
   hipDeviceptr_t    hip_d_pws_amp_buf;
   hipDeviceptr_t    hip_d_pws_comp_buf;
   hipDeviceptr_t    hip_d_pws_idx;
+
+  // double-buffer alternates for pipeline parallelism
+  hipDeviceptr_t    hip_d_pws_comp_buf_alt;
+  hipDeviceptr_t    hip_d_pws_idx_alt;
+  hipStream_t       hip_stream_transfer;
+  // hipEvent_t     hip_event_transfer; // future: HIP pipeline events
   hipDeviceptr_t    hip_d_rules;
   hipDeviceptr_t    hip_d_rules_c;
   hipDeviceptr_t    hip_d_combs;
