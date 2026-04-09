@@ -246,7 +246,7 @@ but irrelevant for brute-force. The optimization strategy must be attack-mode aw
 - [x] Implement autotune result caching across sessions (2026-04-08)
 - [x] Switch candidate buffers to pinned host memory (2026-04-08)
 - [x] Eliminate per-candidate malloc in rule engine (2026-04-08)
-- [ ] Explore mmap for core wordlist path
+- [~] Explore mmap for core wordlist path — **deferred** (2026-04-08): analysis shows I/O is not a bottleneck (GPU util 99%+ in brute-force, CPU candidate gen 94% in dict+rules). The feed plugin system already provides mmap. Migrating core path would break compressed wordlist support and touch many tightly-coupled hot-path functions for marginal gain.
 
 #### Autotune Caching Implementation (2026-04-08)
 
