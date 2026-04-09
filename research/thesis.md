@@ -220,11 +220,27 @@ This requires:
 
 ## 5. Experimental Roadmap
 
-### Phase 1: Measurement Infrastructure
-- [ ] Add high-resolution timing instrumentation to dispatch loop stages
-- [ ] Measure actual GPU utilization (idle time between kernel launches)
-- [ ] Profile rule engine CPU cost for representative workloads
-- [ ] Establish baseline benchmarks across hash modes (fast, medium, slow)
+### Phase 1: Measurement Infrastructure — COMPLETE (2026-04-08)
+- [x] Add high-resolution timing instrumentation to dispatch loop stages
+- [x] Measure actual GPU utilization (idle time between kernel launches)
+- [x] Profile rule engine CPU cost for representative workloads
+- [x] Establish baseline benchmarks across hash modes (fast, medium, slow)
+
+#### Key Empirical Findings (RTX 3090)
+
+**Brute-force mode:** GPU utilization 99-100%. No pipeline bottleneck.
+- MD5: 70.7 GH/s, 99.1% GPU util
+- SHA256: 9.4 GH/s, 99.9% GPU util
+- SHA512: 3.2 GH/s, 100.0% GPU util
+
+**Dictionary+rules (slow-candidates):** GPU utilization **0.4%**.
+- 94.1% of time in CPU candidate generation
+- 5.5% in H2D transfer
+- 0.4% in GPU kernel execution
+- **The GPU is idle 99.6% of the time**
+
+**Conclusion:** Pipeline parallelism is critical for dictionary/rule attacks,
+but irrelevant for brute-force. The optimization strategy must be attack-mode aware.
 
 ### Phase 2: Low-Risk Optimizations
 - [ ] Implement autotune result caching across sessions
