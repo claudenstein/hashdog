@@ -1261,6 +1261,8 @@ typedef struct hc_fp
 #include "ext_OpenCL.h"
 #include "ext_metal.h"
 
+#include "hashdog_perf.h"
+
 typedef struct hc_device_param
 {
   int     device_id;
@@ -1981,6 +1983,11 @@ typedef struct hc_device_param
   cl_mem            opencl_d_st_salts_buf;
   cl_mem            opencl_d_st_esalts_buf;
   cl_mem            opencl_d_kernel_param;
+
+  // hashdog performance instrumentation
+  #ifdef HASHDOG_PERF
+  hashdog_perf_t    hashdog_perf;
+  #endif
 
 } hc_device_param_t;
 

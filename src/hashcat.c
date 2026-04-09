@@ -23,6 +23,7 @@
 #include "bridges.h"
 #include "combinator.h"
 #include "cpt.h"
+#include "hashdog_perf.h"
 #include "debugfile.h"
 #include "dictstat.h"
 #include "dispatch.h"
@@ -347,6 +348,43 @@ static int inner2_loop (hashcat_ctx_t *hashcat_ctx)
   }
 
   hc_thread_wait (backend_ctx->backend_devices_cnt, c_threads);
+
+  #ifdef HASHDOG_PERF
+  for (int i = 0; i < backend_ctx->backend_devices_cnt; i++)
+  {
+    hc_device_param_t *dp = &backend_ctx->devices_param[i];
+
+    if (dp->skipped == true) continue;
+    if (dp->skipped_warning == true) continue;
+
+    hashdog_perf_t *p = &dp->hashdog_perf;
+
+    if (p->batch_count == 0) continue;
+
+    const double total = p->time_get_work_ms + p->time_generate_ms + p->time_copy_ms + p->time_cracker_ms;
+
+    fprintf (stderr,
+      "\n[hashdog-perf] device #%d: %s\n"
+      "  batches:    %" PRIu64 "\n"
+      "  candidates: %" PRIu64 "\n"
+      "  get_work:   %10.1f ms (%5.1f%%)\n"
+      "  generate:   %10.1f ms (%5.1f%%)\n"
+      "  copy:       %10.1f ms (%5.1f%%)\n"
+      "  cracker:    %10.1f ms (%5.1f%%)\n"
+      "  total:      %10.1f ms\n"
+      "  gpu_util:   %5.1f%% (cracker / total)\n",
+      dp->device_id + 1,
+      dp->device_name,
+      p->batch_count,
+      p->candidates_total,
+      p->time_get_work_ms,  total > 0 ? (p->time_get_work_ms  / total) * 100 : 0,
+      p->time_generate_ms,  total > 0 ? (p->time_generate_ms  / total) * 100 : 0,
+      p->time_copy_ms,      total > 0 ? (p->time_copy_ms      / total) * 100 : 0,
+      p->time_cracker_ms,   total > 0 ? (p->time_cracker_ms   / total) * 100 : 0,
+      total,
+      total > 0 ? (p->time_cracker_ms / total) * 100 : 0);
+  }
+  #endif
 
   hcfree (c_threads);
 

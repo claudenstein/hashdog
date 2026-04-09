@@ -18,6 +18,7 @@
 #include "dispatch.h"
 #include "generic.h"
 #include "convert.h"
+#include "hashdog_perf.h"
 
 #ifdef WITH_BRAIN
 #include "brain.h"
@@ -505,6 +506,10 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
       while (status_ctx->run_thread_level1 == true)
       {
+        #ifdef HASHDOG_PERF
+        hashdog_perf_t *perf = &device_param->hashdog_perf;
+        #endif
+
         u64 words_fin = 0;
 
         memset (device_param->pws_comp,     0, device_param->size_pws_comp);
@@ -516,6 +521,8 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
         // this greatly reduces spam on hashcat console
 
         const u64 pre_rejects_ignore = get_power (backend_ctx, device_param) / 2;
+
+        HASHDOG_TIMER_START (generate);
 
         while (pre_rejects > pre_rejects_ignore)
         {
@@ -690,10 +697,14 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
         // flush
         //
 
+        HASHDOG_TIMER_STOP (perf, time_generate_ms, generate);
+
         const u64 pws_cnt = device_param->pws_cnt;
 
         if (pws_cnt)
         {
+          HASHDOG_TIMER_START (copy);
+
           if (run_copy (hashcat_ctx, device_param, pws_cnt) == -1)
           {
             hc_fclose (&extra_info_straight.fp);
@@ -704,6 +715,10 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
             return -1;
           }
 
+          HASHDOG_TIMER_STOP (perf, time_copy_ms, copy);
+
+          HASHDOG_TIMER_START (cracker);
+
           if (run_cracker (hashcat_ctx, device_param, -1, pws_cnt) == -1)
           {
             hc_fclose (&extra_info_straight.fp);
@@ -713,6 +728,10 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
             return -1;
           }
+
+          HASHDOG_TIMER_STOP (perf, time_cracker_ms, cracker);
+
+          HASHDOG_PERF_BATCH (perf, pws_cnt);
 
           #ifdef WITH_BRAIN
           if (user_options->brain_client == true)
@@ -1322,7 +1341,15 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
       while (status_ctx->run_thread_level1 == true)
       {
+        #ifdef HASHDOG_PERF
+        hashdog_perf_t *perf = &device_param->hashdog_perf;
+        #endif
+
+        HASHDOG_TIMER_START (get_work);
+
         const u64 work = get_work (hashcat_ctx, device_param, -1);
+
+        HASHDOG_TIMER_STOP (perf, time_get_work_ms, get_work);
 
         if (work == 0) break;
 
@@ -1331,8 +1358,19 @@ static int calc (hashcat_ctx_t *hashcat_ctx, hc_device_param_t *device_param)
 
         device_param->pws_cnt = work;
 
+        HASHDOG_TIMER_START (copy);
+
         if (run_copy    (hashcat_ctx, device_param, device_param->pws_cnt) == -1) return -1;
+
+        HASHDOG_TIMER_STOP (perf, time_copy_ms, copy);
+
+        HASHDOG_TIMER_START (cracker);
+
         if (run_cracker (hashcat_ctx, device_param, -1, device_param->pws_cnt) == -1) return -1;
+
+        HASHDOG_TIMER_STOP (perf, time_cracker_ms, cracker);
+
+        HASHDOG_PERF_BATCH (perf, device_param->pws_cnt);
 
         device_param->pws_cnt = 0;
 
