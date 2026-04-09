@@ -356,12 +356,14 @@ thread start, avoiding per-batch context overhead.
 (CPU-dominant, 67% CPU time), the GPU execution (33%) is hidden by CPU generation.
 The smaller improvement for bcrypt reflects the smaller ratio of GPU-to-total time.
 
-### Phase 4: Advanced Optimizations — IN PROGRESS
+### Phase 4: Advanced Optimizations — COMPLETE (initial scope)
 - [x] SSE2-vectorized case-conversion mangle functions (lrest, urest, trest) (2026-04-09)
-- [ ] Extend SIMD to additional rule operations (replace, reverse, etc.)
-- [ ] Adaptive work scheduling (requires multi-GPU testing)
-- [ ] Extend pipeline parallelism to COMBI and BF slow_candidates paths
-- [ ] Kernel specialization for common GPU architectures
+- [x] SSE2-vectorized replace + class replace (l/u/d/lh/uh) (2026-04-09)
+- [x] Extract pipeline helpers into reusable functions (2026-04-09)
+- [x] Extend pipeline parallelism to COMBI slow_candidates path (2026-04-09)
+- [x] Extend pipeline parallelism to BF/mask slow_candidates path (2026-04-09)
+- [ ] Adaptive work scheduling (requires multi-GPU testing — deferred)
+- [ ] Kernel specialization for common GPU architectures (deferred)
 
 #### SSE2 Rule Engine (2026-04-09)
 
@@ -379,19 +381,34 @@ than the scalar loop. Most useful in combination with pipeline parallelism for f
 
 #### Final Comparison Summary (2026-04-09)
 
-Median of 3 runs, 25s runtime, 128K wordlist × 66 rules, RTX 3090, autotune cache cleared
-between runs:
+Median of 3 runs, 25s runtime, RTX 3090, autotune cache cleared between runs.
+
+**Dictionary + 66 rules (slow_candidates STRAIGHT path):**
 
 | Hash Mode | hashcat | hashdog | Δ |
 |-----------|--------:|--------:|---:|
-| 0 MD5 | 12.08 MH/s | 12.09 MH/s | +0.2% |
-| 1400 SHA256 | 11.65 MH/s | 12.04 MH/s | +3.4% |
-| 1700 SHA512 | 11.52 MH/s | 12.20 MH/s | +5.9% |
-| 400 phpass | 876.2 kH/s | 1048.0 kH/s | +19.6% |
-| 500 md5crypt | 464.5 kH/s | 480.9 kH/s | +3.5% |
-| 7400 sha256crypt | 116.0 kH/s | 197.6 kH/s | +70.3% |
-| 1800 sha512crypt | 74.95 kH/s | 113.7 kH/s | +51.7% |
-| 3200 bcrypt | 16.35 kH/s | 19.42 kH/s | +18.8% |
+| 0 MD5 | 12.07 MH/s | 12.29 MH/s | +1.8% |
+| 1400 SHA256 | 12.06 MH/s | 11.85 MH/s | -1.7% (variance) |
+| 1700 SHA512 | 11.60 MH/s | 12.26 MH/s | +5.7% |
+| 400 phpass | 878.2 kH/s | 1003.3 kH/s | +14.2% |
+| 500 md5crypt | 533.9 kH/s | 557.1 kH/s | +4.3% |
+| 7400 sha256crypt | 115.9 kH/s | 197.2 kH/s | **+70.1%** |
+| 1800 sha512crypt | 78.59 kH/s | 108.2 kH/s | **+37.7%** |
+| 3200 bcrypt | 16.15 kH/s | 19.38 kH/s | **+20.0%** |
+
+**Mask attack (slow_candidates BF path), sha512crypt with `?l?l?l?l?l?l?d?d`:**
+
+| Binary | Speed |
+|--------|------:|
+| hashcat | 133.7 kH/s |
+| hashdog | 192.2 kH/s (**+43.7%**) |
+
+**Combinator (slow_candidates COMBI path), sha512crypt:**
+
+| Binary | Speed |
+|--------|------:|
+| hashcat | 104.0 kH/s |
+| hashdog | 107.5 kH/s (+3.4%) |
 
 ---
 

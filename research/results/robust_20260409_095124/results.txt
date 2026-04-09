@@ -1,0 +1,20 @@
+=== Robust comparison: hashcat vs hashdog (median of 3 runs) ===
+Date: Thu Apr  9 09:51:24 AM -03 2026
+Workload: 128K words × 66 rules, 25s runtime, 3 runs each
+
+>>> Mode 0 (MD5) — running 3 iterations each
+  hashcat (median): 12249000 H/s    hashdog (median): 12301600 H/s    improvement: +0.4%
+>>> Mode 1400 (SHA256) — running 3 iterations each
+  hashcat (median): 12224600 H/s    hashdog (median): 12223200 H/s    improvement: -0.0%
+>>> Mode 1700 (SHA512) — running 3 iterations each
+  hashcat (median): 12296300 H/s    hashdog (median): 11880400 H/s    improvement: -3.4%
+>>> Mode 400 (phpass) — running 3 iterations each
+  hashcat (median): 1002000 H/s    hashdog (median): 1052400 H/s    improvement: +5.0%
+>>> Mode 500 (md5crypt) — running 3 iterations each
+  hashcat (median): 479900 H/s    hashdog (median): 478100 H/s    improvement: -0.4%
+>>> Mode 7400 (sha256crypt) — running 3 iterations each
+  hashcat (median): 196400 H/s    hashdog (median): 196900 H/s    improvement: +0.3%
+>>> Mode 1800 (sha512crypt) — running 3 iterations each
+  hashcat (median): 116000 H/s    hashdog (median): 108400 H/s    improvement: -6.6%
+>>> Mode 3200 (bcrypt) — running 3 iterations each
+  hashcat (median): 19352 H/s    hashdog (median): 19358 H/s    improvement: +0.0%

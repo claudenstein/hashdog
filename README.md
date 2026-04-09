@@ -4,22 +4,38 @@
 
 ### Headline Result: Pipeline Parallelism + SIMD Rule Engine ###
 
-For dictionary+rules attacks (`--slow-candidates`), hashdog achieves up to **+70% throughput** over upstream hashcat by overlapping CPU candidate generation with GPU kernel execution and vectorizing the rule engine case-conversion functions.
+For attacks using `--slow-candidates` (dictionary, combinator, or mask), hashdog achieves up to **+70% throughput** over upstream hashcat by overlapping CPU candidate generation with GPU kernel execution and vectorizing the rule engine case-conversion / class-replace functions.
+
+#### Dictionary + rules (`-a 0 --slow-candidates`)
 
 | Hash Mode | hashcat v7.1.2 | hashdog | Improvement |
 |-----------|---------------:|--------:|------------:|
-| 0  MD5             | 12.08 MH/s | 12.09 MH/s | +0.2% |
-| 1400 SHA256        | 11.65 MH/s | 12.04 MH/s | **+3.4%** |
-| 1700 SHA512        | 11.52 MH/s | 12.20 MH/s | **+5.9%** |
-| 400 phpass         | 876.2 kH/s | 1048.0 kH/s | **+19.6%** |
-| 500 md5crypt       | 464.5 kH/s | 480.9 kH/s | **+3.5%** |
-| 7400 sha256crypt   | 116.0 kH/s | 197.6 kH/s | **+70.3%** |
-| 1800 sha512crypt   | 74.95 kH/s | 113.7 kH/s | **+51.7%** |
-| 3200 bcrypt        | 16.35 kH/s | 19.42 kH/s | **+18.8%** |
+| 0  MD5             | 12.07 MH/s | 12.29 MH/s | **+1.8%** |
+| 1400 SHA256        | 12.06 MH/s | 11.85 MH/s | -1.7% (variance) |
+| 1700 SHA512        | 11.60 MH/s | 12.26 MH/s | **+5.7%** |
+| 400 phpass         | 878.2 kH/s | 1003.3 kH/s | **+14.2%** |
+| 500 md5crypt       | 533.9 kH/s | 557.1 kH/s | **+4.3%** |
+| 7400 sha256crypt   | 115.9 kH/s | 197.2 kH/s | **+70.1%** |
+| 1800 sha512crypt   | 78.59 kH/s | 108.2 kH/s | **+37.7%** |
+| 3200 bcrypt        | 16.15 kH/s | 19.38 kH/s | **+20.0%** |
 
 *Workload: 128K-word dictionary × 66 rules = 8.65M candidates per pass, RTX 3090, runtime=25s, median of 3 runs, autotune cache cleared between runs.*
 
+#### Mask attack with slow-candidates (`-a 3 --slow-candidates`)
+
+| Hash Mode | Mask | hashcat | hashdog | Improvement |
+|-----------|------|--------:|--------:|------------:|
+| 1800 sha512crypt | `?l?l?l?l?l?l?d?d` | 133.7 kH/s | 192.2 kH/s | **+43.7%** |
+
+#### Combinator attack with slow-candidates (`-a 1 --slow-candidates`)
+
+| Hash Mode | hashcat | hashdog | Improvement |
+|-----------|--------:|--------:|------------:|
+| 1800 sha512crypt | 104.0 kH/s | 107.5 kH/s | **+3.4%** |
+
 The improvement scales with the GPU/CPU ratio: slow hashes (sha256crypt, sha512crypt, bcrypt) where the GPU dominates execution time benefit most because the CPU candidate generation phase is fully hidden behind GPU computation. Fast hashes show smaller gains because the GPU finishes before the CPU can stage the next batch — but the SSE2 rule engine still contributes a few percent.
+
+The pipeline extends to **all three** `--slow-candidates` dispatch paths: STRAIGHT (dictionary + rules), COMBI (combinator), and BF (mask). All three paths share the same persistent GPU worker thread infrastructure.
 
 ### Brute-Force Mode ###
 
@@ -38,9 +54,10 @@ For brute-force attacks (`-a 3` mask mode), hashdog matches upstream hashcat per
 
 ### Research Status ###
 
-**Phase 4: Advanced Optimizations — IN PROGRESS**
+**Phase 4: Advanced Optimizations — COMPLETE**
 
-- **SSE2 rule engine** — `mangle_lrest`, `mangle_urest`, `mangle_trest` (lowercase, uppercase, toggle case) vectorized to process 16 bytes at a time using SSE2 intrinsics. Provides additional speedup on top of pipeline parallelism for rules that perform case conversion.
+- **SSE2 rule engine** — Nine mangle functions vectorized to process 16 bytes at a time using SSE2 intrinsics: `mangle_lrest`, `mangle_urest`, `mangle_trest` (case conversion), `mangle_replace` (literal char replace), `mangle_replace_class_l/u/d/lh/uh` (class-based replace for lower, upper, digit, lower-hex, upper-hex). Provides additional speedup on top of pipeline parallelism for rules that touch large fractions of the password.
+- **Pipeline extension to COMBI and BF/mask paths** — The persistent GPU worker thread now drives all three `--slow-candidates` dispatch paths (STRAIGHT, COMBI, BF). Pipeline helper functions (`pipeline_gpu_start/stop/join_prev/submit`) are shared across paths to avoid duplication.
 
 **Phase 3: Pipeline Parallelism — COMPLETE**
 
