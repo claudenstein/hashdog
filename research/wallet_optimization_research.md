@@ -386,6 +386,32 @@ These two together should bring Ethereum keystore scrypt cracking from ~17 H/s t
 10. ARM SHA hardware extensions for Apple Silicon Metal bridge (§4.9)
 11. Tensor-core SHA-256 on Hopper (revisit when targeting H100/B100)
 
+### Phase F — secp256k1 EC modes (Bitcoin key recovery) — *candidate to evaluate* ★★
+
+12. **`EC_LEAN_REDUCE`: collapse the redundant second omega-fold in `mul_mod`** — sourced from the SeedBlaster cross-codebase analysis (see `research/seedblaster_port_analysis.md`). **Not yet implemented; evaluate behind a build flag.**
+
+   *Scope:* the 14 modes that do secp256k1 point math in-kernel — Bitcoin raw-key **30901–30906**, Bitcoin WIF **28501–28506** (no password KDF, so EC + hash160 is essentially the whole per-candidate cost → realize the gain), and Electrum **21700/21800** (PBKDF2-HMAC-SHA512–gated → gain ≈ 0). Zero effect on all non-EC wallet modes (they never `#include inc_ecc_secp256k1.cl`).
+
+   *What:* `mul_mod` (`OpenCL/inc_ecc_secp256k1.cl:697–715`) reduces the 512-bit product mod `p = 2²⁵⁶ − 2³² − 977` with two omega folds. After the **first** fold, the only nonzero overflow words are `tmp[8]` and `tmp[9]` (`tmp[10..15]` are provably zero). The **second** fold nonetheless runs a full 8-iteration loop (6 of 8 iterations multiply zero) and writes `t[8]`/`t[9]`, which the final 8-limb `add(r, r, t)` never reads (dead writes). Replace the loop + dead writes with a direct fold of the two nonzero words, `t = (tmp[8] + tmp[9]·2³²)·(2³² + 977)`:
+
+   ```c
+   // replaces the i=0..7 loop + t[8]/t[9] writes at lines 697-710,
+   // immediately before  c2 = add (r, r, t);
+   u64 TMP = (u64) tmp[8] + ((u64) tmp[9] << 32);   // the only nonzero overflow
+   u64 f   = 977ul * TMP;                            // low part of TMP * (2^32 + 977)
+   t[0] = (u32) f;
+   u64 a1 = (f  >> 32) + (u64) tmp[8]; t[1] = (u32) a1;
+   u64 a2 = (a1 >> 32) + (u64) tmp[9]; t[2] = (u32) a2;
+   t[3] = (u32) (a2 >> 32);
+   t[4] = 0; t[5] = 0; t[6] = 0; t[7] = 0;
+   ```
+
+   *Expected gain:* SeedBlaster measured **+0.71% full pipeline / +2.3% EC stage** (drift-cancelled, oracle bit-exact over 350K products). In hashdog: **~+0.5–0.7% on 28501–28506 / 30901–30906**; **< 0.1% (noise) on 21700/21800**; **0 elsewhere**. Pure `u32/u64`, no PTX — applies on NV/AMD/Intel alike, no `IS_NV` gate.
+
+   *Risk:* low difficulty but medium blast radius — `mul_mod` is the hottest EC primitive (~256 calls/scalar-mult). Gate behind `#ifdef EC_LEAN_REDUCE` for clean A/B. **Validate bit-exactly** with `tools/test.sh -m {28501,28502,28505,28506,30901,30902,30905,30906,21700,21800}` across attack modes a0/a1/a3, plus an AMD/HIP `k·G` diff. Math is verified equivalent over the full `tmp[8]` range with `tmp[9] ∈ {0,1}`; transcription error is the only real failure mode — copy the expression verbatim.
+
+   *Origin note:* this is the **only** SeedBlaster optimization that ports — its EC/SHA kernels were forked from hashcat, so its other "wins" (PTX carry chains, width-4 wNAF, rolling SHA-512 schedule, bitselect) already exist in hashdog. The omega-fold simplification is a general number-theoretic identity, not hashcat lineage, hence a genuine addition.
+
 ---
 
 ## 7. Mathematical Bottom Line
